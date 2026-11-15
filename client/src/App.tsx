@@ -5,7 +5,8 @@ import { Archive, Companies } from './enviro/Archive';
 import { ReportForm } from './enviro/ReportForm';
 import { categories, companyName, demoCompanies, demoReports, faNumber, type Category, type Company, type EnvContext, type Report } from './enviro/data';
 import { envFetch } from './enviro/api';
-import { startLogin } from './const';
+import { SupabaseLogin } from './components/SupabaseLogin';
+import { supabase } from './lib/supabase';
 
 const navReports: { id: View; label: string; icon: typeof Droplets }[] = [
   { id: 'water', label: 'آب و پساب', icon: Droplets }, { id: 'waste', label: 'پسماند', icon: Recycle }, { id: 'air', label: 'هوا و انتشار', icon: Wind }, { id: 'indicators', label: 'شاخص‌های سالیانه', icon: FileBarChart2 },
@@ -70,9 +71,9 @@ function App() {
   async function logout() {
     setExportMessage('');
     try {
-      const response = await envFetch('/api/trpc/auth.logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ json: null }) });
-      if (!response.ok) throw new Error('logout failed');
-      try { sessionStorage.removeItem('manus-cookie'); localStorage.removeItem('manus-runtime-user-info'); } catch { /* storage may be unavailable */ }
+      if (!supabase) throw new Error('تنظیمات Supabase کامل نیست.');
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
       setContext({ authenticated: false, configured: !!context?.configured });
       setView('dashboard');
       setNoticeOpen(false);
@@ -90,7 +91,8 @@ function App() {
     <div className="main-shell"><header className="topbar"><div className="topbar-right"><button className="mobile-menu" onClick={() => setMobileOpen(true)} aria-label="باز کردن منو"><Menu size={21}/></button><span className="topbar-greeting">سامانه یکپارچه گزارش محیط زیست</span><span className="topbar-divider"/><span className="topbar-date">{dateText}</span></div><div className="topbar-left"><span className={`connection-pill ${connected ? 'live' : ''}`}><i/>{statusText}</span><button className="icon-button notification-button" aria-label="راهنما و وضعیت سامانه" onClick={() => setNoticeOpen(!noticeOpen)}><Bell size={19}/><span/></button><div className="topbar-divider"/><div className="user-chip"><div className="avatar">{connected ? (context?.user?.name?.slice(0, 1) || 'ک') : 'ز'}</div><div><strong>{connected ? context?.user?.name : 'کاربر نمونه'}</strong><small>{isAdmin ? 'پنل مدیریت' : 'پنل شرکت'}</small></div><ChevronDown size={15}/></div></div></header>
       {noticeOpen && <div className="notice-popover"><div><strong>راهنمای سامانه</strong><button onClick={() => setNoticeOpen(false)} aria-label="بستن"><X size={16}/></button></div><p>از منوی سمت راست برای ثبت گزارش‌های شش‌ماهه و شاخص‌های سالیانه استفاده کنید. در آرشیو می‌توانید گزارش‌ها را جست‌وجو و خروجی دریافت کنید.</p><small>{demo ? 'در حالت نمونه، هیچ تغییری در سرور ذخیره نمی‌شود.' : 'وضعیت دسترسی و اطلاعات از سرور دریافت می‌شود.'}</small>{connected && <button className="outline-btn" onClick={logout}>خروج از حساب</button>}</div>}
       <main className="main-content">
-        <div className={`connection-banner ${connected ? 'connected-banner' : ''}`}><span className="banner-icon">{connected ? <Check size={17}/> : <AlertCircle size={18}/>}</span><div><strong>{loading ? 'در حال بررسی وضعیت اتصال' : connected ? 'اتصال سامانه برقرار است' : 'نمایش نمونه؛ اطلاعات واقعی نیست'}</strong><span>{loading ? 'تا زمان دریافت پاسخ سرور، داده‌های نمونه نمایش داده می‌شوند.' : connected ? 'اطلاعات این نما از پایگاه داده سامانه دریافت شده‌اند.' : connectionError || (context?.user?.role === 'pending' ? 'حساب هنوز به شرکت یا نقش اختصاص داده نشده است؛ ثبت واقعی در دسترس نیست.' : context?.configured && !context.authenticated ? 'دسترسی کاربر تأیید نشده است؛ ثبت واقعی در دسترس نیست.' : 'پایگاه داده سامانه هنوز پیکربندی نشده است؛ ثبت واقعی در دسترس نیست.')}</span></div>{!connected && context?.configured && !context.authenticated && window.__MANUS_CONFIG__?.oauthPortalUrl && window.__MANUS_CONFIG__?.projectId && <button onClick={() => { try { startLogin(); } catch { setExportMessage('ورود واقعی پیکربندی نشده است.'); } }}>ورود با حساب Manus</button>}{!connected && <button onClick={() => setReload(value => value + 1)}><RefreshCw size={14}/> بررسی مجدد</button>}</div>
+        <div className={`connection-banner ${connected ? 'connected-banner' : ''}`}><span className="banner-icon">{connected ? <Check size={17}/> : <AlertCircle size={18}/>}</span><div><strong>{loading ? 'در حال بررسی وضعیت اتصال' : connected ? 'اتصال سامانه برقرار است' : 'نمایش نمونه؛ اطلاعات واقعی نیست'}</strong><span>{loading ? 'تا زمان دریافت پاسخ سرور، داده‌های نمونه نمایش داده می‌شوند.' : connected ? 'اطلاعات این نما از پایگاه داده سامانه دریافت شده‌اند.' : connectionError || (context?.user?.role === 'pending' ? 'حساب هنوز به شرکت یا نقش اختصاص داده نشده است؛ ثبت واقعی در دسترس نیست.' : context?.configured && !context.authenticated ? 'دسترسی کاربر تأیید نشده است؛ ثبت واقعی در دسترس نیست.' : 'پایگاه داده سامانه هنوز پیکربندی نشده است؛ ثبت واقعی در دسترس نیست.')}</span></div>{!connected && <button onClick={() => setReload(value => value + 1)}><RefreshCw size={14}/> بررسی مجدد</button>}</div>
+        {context?.authenticated !== true && <SupabaseLogin onSignedIn={() => setReload(value => value + 1)} />}
         {demo && <div className="demo-controls"><div><span className="demo-tag">نمایش نمونه</span><span>پیش‌نمایش رابط، بدون ورود واقعی یا ذخیره دائمی</span></div><div className="role-controls"><span>پیش‌نمایش پنل:</span><button className={demoRole === 'admin' ? 'selected' : ''} onClick={() => { setDemoRole('admin'); if (view === 'companies') setView('dashboard'); }}>مدیریت</button><button className={demoRole === 'company' ? 'selected' : ''} onClick={() => { setDemoRole('company'); if (view === 'companies') setView('dashboard'); }}>شرکت</button>{demoRole === 'company' && <select aria-label="انتخاب شرکت نمونه" value={demoCompany} onChange={event => setDemoCompany(event.target.value)}>{demoCompanies.map(company => <option value={company.id} key={company.id}>{company.name}</option>)}</select>}</div></div>}
         {exportMessage && <div className="export-message" role="status"><InfoIcon/>{exportMessage}<button onClick={() => setExportMessage('')} aria-label="بستن پیام"><X size={15}/></button></div>}
         {view === 'dashboard' && <Dashboard reports={reports} companies={companies} demo={demo} isAdmin={isAdmin} setView={navigate} openReport={openReport}/>}

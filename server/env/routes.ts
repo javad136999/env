@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
-import { sdk, type SessionPayload } from "../_core/sdk";
+import { sdk, type SupabaseIdentity } from "../_core/sdk";
 import { EnvError, accessDenied, notConfigured, reportConflict } from "./errors";
 import { assertLegacyValuesUnchanged, parseReport, preserveLegacyValues, reportsCsv, reportWarnings } from "./reports";
 import { findAccount, findCompany, findReport, hasSupabaseConfiguration, insertReport, listAccounts, listCompanies, listReports, saveCompany, setAccountMembership, updateReport, type AccountRow } from "./supabase";
@@ -9,7 +9,7 @@ function sendError(res: Response, error: unknown, extra: Record<string, unknown>
   const safe = error instanceof EnvError ? error : new EnvError("INTERNAL_ERROR", "خطای داخلی در پردازش درخواست.", 500);
   res.status(safe.status).json({ ...extra, error: { code: safe.code, message: safe.message } });
 }
-function noSession() { return new EnvError("UNAUTHENTICATED", "برای ادامه با Manus وارد شوید.", 401); }
+function noSession() { return new EnvError("UNAUTHENTICATED", "برای ادامه با ایمیل و رمز عبور وارد حساب Supabase شوید.", 401); }
 function noStore(res: Response) {
   res.set({ "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", Vary: "Cookie, Authorization" });
 }
@@ -17,22 +17,22 @@ function publicUser(user: db.AuthUser) {
   const role = user.role === "admin" ? "admin" as const : user.role === "user" ? "company" as const : "pending" as const;
   return { name: user.name, role, ...(role !== "pending" && user.companyId ? { companyId: user.companyId } : {}) };
 }
-async function identity(req: Request): Promise<SessionPayload> {
+async function identity(req: Request): Promise<SupabaseIdentity> {
   const session = await sdk.verifyRequestSession(req);
-  if (!session || session.openId.startsWith("cron_")) throw noSession();
+  if (!session) throw noSession();
   return session;
 }
-async function account(session: SessionPayload): Promise<db.AuthUser> {
-  const existing = await db.getUserByOpenId(session.openId, session.name);
+async function account(session: SupabaseIdentity): Promise<db.AuthUser> {
+  const existing = await db.getUserByOpenId(session.openId, session.name, session.email);
   if (existing) return existing;
-  // Preview may provide a real, project-bound verified JWT before the OAuth callback.
+  // A verified Supabase Auth identity receives a pending account until an administrator assigns access.
   // Create only an unassigned pending account, never membership or privilege.
-  await db.upsertUser({ openId: session.openId, name: session.name || null });
-  const registered = await db.getUserByOpenId(session.openId, session.name);
+  await db.upsertUser({ openId: session.openId, name: session.name || null, email: session.email });
+  const registered = await db.getUserByOpenId(session.openId, session.name, session.email);
   if (!registered) throw new EnvError("DATABASE_ERROR", "ثبت حساب در پایگاه داده ناموفق بود.", 503);
   return registered;
 }
-async function authorized(session: SessionPayload): Promise<db.AuthUser> {
+async function authorized(session: SupabaseIdentity): Promise<db.AuthUser> {
   const user = await account(session);
   if (user.role === "pending") throw accessDenied();
   return user;
@@ -111,10 +111,10 @@ export function registerEnvRoutes(app: Express) {
 
   app.get("/api/env/context", async (req, res) => {
     noStore(res);
-    let session: SessionPayload | null = null;
+    let session: SupabaseIdentity | null = null;
     try {
       session = await sdk.verifyRequestSession(req);
-      if (!session || session.openId.startsWith("cron_")) {
+      if (!session) {
         res.json({ authenticated: false, configured: hasSupabaseConfiguration() });
         return;
       }
@@ -130,7 +130,7 @@ export function registerEnvRoutes(app: Express) {
       const [companies, reports] = await Promise.all([listCompanies(companyId), listReports({ companyId })]);
       res.json({ authenticated: true, configured: true, user: publicUser(user), companies, reports });
     } catch (error) {
-      sendError(res, error, { authenticated: !!session && !session.openId.startsWith("cron_"), configured: hasSupabaseConfiguration() });
+      sendError(res, error, { authenticated: !!session, configured: hasSupabaseConfiguration() });
     }
   });
 

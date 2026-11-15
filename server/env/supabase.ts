@@ -1,9 +1,10 @@
 import { EnvError, notConfigured, reportConflict } from "./errors";
+import { ENV } from "../_core/env";
 import type { Report, ReportInput } from "./reports";
 import { reportFromRow } from "./reports";
 
-// Fixed project; the service credential is read only on the server and is never logged.
-const REST_URL = "https://vcayskykkanmfanvjqlh.supabase.co/rest/v1";
+// The service credential is read only on the server and is never logged.
+const restUrl = () => `${ENV.supabaseUrl.replace(/\/$/, "")}/rest/v1`;
 const PAGE_SIZE = 500;
 const REPORT_COLUMNS = "id,company_id,year,period,category,values,status,updated_at,revision";
 
@@ -27,7 +28,7 @@ async function request<T>(table: Table, query: URLSearchParams, method: Method =
   if (!key?.trim()) throw notConfigured();
   let response: Response;
   try {
-    response = await fetch(`${REST_URL}/${table}?${query}`, {
+    response = await fetch(`${restUrl()}/${table}?${query}`, {
       method,
       headers: {
         apikey: key,

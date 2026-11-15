@@ -1,10 +1,7 @@
 import express from "express";
 import { createServer, type Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sdk } from "../_core/sdk";
-import { registerOAuthRoutes } from "../_core/oauth";
 import { upsertUser } from "../db";
-import { encodeOAuthState, OAUTH_STATE_COOKIE } from "../../shared/const";
 import { parseReport, reportWarnings, reportsCsv, type Report } from "./reports";
 import { registerEnvRoutes } from "./routes";
 
@@ -29,9 +26,7 @@ let race = false;
 
 beforeEach(async () => {
   vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "unit-only-key");
-  vi.stubEnv("MANUS_PROJECT_ID", "unit-project");
-  vi.stubEnv("MANUS_JWT_SECRET", "unit-only-session-secret");
-  vi.stubEnv("OWNER_OPEN_ID", "");
+  vi.stubEnv("SUPABASE_ADMIN_EMAIL", "");
   db = {
     env_companies: [{ id: "company-a", name: "Company A" }, { id: "company-b", name: "Company B" }],
     env_accounts: [
@@ -48,6 +43,12 @@ beforeEach(async () => {
     if (url.origin !== "https://vcayskykkanmfanvjqlh.supabase.co") {
       if (url.hostname !== "127.0.0.1") throw new Error("Unexpected external connection in test");
       return realFetch(resource, init);
+    }
+    if (url.pathname === "/auth/v1/user") {
+      const token = new Headers(init?.headers).get("Authorization")?.replace(/^Bearer /, "") ?? "";
+      const openId = token.startsWith("test-token-") ? token.slice("test-token-".length) : "";
+      if (!openId) return Response.json({ message: "invalid token" }, { status: 401 });
+      return Response.json({ id: openId, email: `${openId}@example.com`, user_metadata: { name: "Session Name" } });
     }
     const table = url.pathname.split("/").pop()!;
     if (!(table in db)) throw new Error("Unexpected table");
@@ -98,7 +99,6 @@ beforeEach(async () => {
   }));
   const app = express();
   app.use(express.json());
-  registerOAuthRoutes(app);
   registerEnvRoutes(app);
   server = createServer(app);
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -111,10 +111,10 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 async function request(path: string, openId?: string, body?: unknown) {
-  const token = openId ? await sdk.signSession({ openId, appId: "unit-project", name: "Session Name" }) : undefined;
+  const token = openId ? `test-token-${openId}` : undefined;
   return fetch(base + path, {
     method: body === undefined ? "GET" : "POST",
-    headers: { ...(token ? { Cookie: `webdev_app_session=${token}` } : {}), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
 }
@@ -155,8 +155,8 @@ describe("env permissions and persistence (mock database only)", () => {
     const admin = await (await request("/api/env/context", "admin-a")).json();
     expect(admin.user.role).toBe("admin");
     expect(admin.reports).toHaveLength(2);
-    vi.stubEnv("OWNER_OPEN_ID", "owner-test");
-    const owner = await (await request("/api/env/context", "owner-test")).json();
+    vi.stubEnv("SUPABASE_ADMIN_EMAIL", "owner@example.com");
+    const owner = await (await request("/api/env/context", "owner")).json();
     expect(owner.user.role).toBe("admin");
     expect(owner.reports).toHaveLength(2);
   });
@@ -182,24 +182,11 @@ describe("env permissions and persistence (mock database only)", () => {
     expect(db.env_accounts.find(x => x.open_id === "admin-a")?.role).toBe("admin");
   });
   it("upserts only pending identities without overwriting existing privileges", async () => {
-    await upsertUser({ openId: "new-user", name: "New", email: null, role: "admin" });
+    await upsertUser({ openId: "new-user", name: "New", email: "new-user@example.com" });
     expect(db.env_accounts.find(x => x.open_id === "new-user")).toMatchObject({ role: "pending", company_id: null });
-    await upsertUser({ openId: "admin-a", name: "New Name", role: "user" });
+    await upsertUser({ openId: "admin-a", name: "New Name", email: "admin-a@example.com" });
     expect(db.env_accounts.find(x => x.open_id === "admin-a")).toMatchObject({ role: "admin", company_id: "company-a" });
     expect(calls.filter(call => call.method === "POST").every(call => call.body?.role === "pending")).toBe(true);
-  });
-  it("requires a bound OAuth nonce and registers a new verified identity as pending", async () => {
-    const exchange = vi.spyOn(sdk, "exchangeCodeForToken").mockResolvedValue({ accessToken: "test-access-token" } as never);
-    vi.spyOn(sdk, "getUserInfo").mockResolvedValue({ openId: "oauth-user", name: "OAuth user" } as never);
-    const state = encodeOAuthState({ redirectUri: "https://example.test/api/oauth/callback", nonce: "nonce-test" });
-    const path = `/api/oauth/callback?${new URLSearchParams({ code: "test-code", state })}`;
-    const invalid = await fetch(base + path, { redirect: "manual" });
-    expect(invalid.status).toBe(403);
-    expect(exchange).not.toHaveBeenCalled();
-    const valid = await fetch(base + path, { redirect: "manual", headers: { Cookie: `${OAUTH_STATE_COOKIE}=nonce-test` } });
-    expect(valid.status).toBe(302);
-    expect(valid.headers.get("set-cookie")).toContain("webdev_app_session=");
-    expect(db.env_accounts.find(x => x.open_id === "oauth-user")).toMatchObject({ role: "pending", company_id: null });
   });
   it("creates a new report without a client-chosen id, and records the actor", async () => {
     const rows = JSON.stringify([{ source: "well", amount: 3, unit: "m3" }]);
