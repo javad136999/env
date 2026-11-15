@@ -4,8 +4,8 @@ import axios, { type AxiosInstance } from "axios";
 import { parse as parseCookieHeader } from "cookie";
 import type { Request } from "express";
 import { SignJWT, jwtVerify } from "jose";
-import type { User } from "../../drizzle/schema";
 import * as db from "../db";
+import { accessDenied } from "../env/errors";
 import { ENV } from "./env";
 import type {
   ExchangeTokenRequest,
@@ -209,6 +209,7 @@ class SDKServer {
       const secretKey = this.getSessionSecret();
       const { payload } = await jwtVerify(cookieValue, secretKey, {
         algorithms: ["HS256"],
+        requiredClaims: ["exp"],
       });
       const { openId, appId, name } = payload as Record<string, unknown>;
 
@@ -226,10 +227,20 @@ class SDKServer {
         appId,
         name,
       };
-    } catch (error) {
-      console.warn("[Auth] Session verification failed", String(error));
+    } catch {
+      console.warn("[Auth] Session verification failed");
       return null;
     }
+  }
+
+  /** Verify the same application cookie or Preview bearer token used by OAuth. */
+  async verifyRequestSession(req: Request): Promise<SessionPayload | null> {
+    const cookies = this.parseCookies(req.headers.cookie);
+    let token = cookies.get(COOKIE_NAME);
+    if (!token && typeof req.headers.authorization === "string" && req.headers.authorization.startsWith("Bearer ")) {
+      token = req.headers.authorization.slice(7);
+    }
+    return this.verifySession(token);
   }
 
   async getUserInfoWithJwt(
@@ -291,37 +302,9 @@ class SDKServer {
       return buildCronUser(userInfo);
     }
 
-    const sessionUserId = session.openId;
-    const signedInAt = new Date();
-    let user = await db.getUserByOpenId(sessionUserId);
-
-    // If user not in DB, sync from OAuth server automatically
-    if (!user) {
-      try {
-        const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
-        await db.upsertUser({
-          openId: userInfo.openId,
-          name: userInfo.name || null,
-          email: userInfo.email ?? null,
-          loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
-          lastSignedIn: signedInAt,
-        });
-        user = await db.getUserByOpenId(userInfo.openId);
-      } catch (error) {
-        console.error("[Auth] Failed to sync user from OAuth:", error);
-        throw ForbiddenError("Failed to sync user info");
-      }
-    }
-
-    if (!user) {
-      throw ForbiddenError("User not found");
-    }
-
-    await db.upsertUser({
-      openId: user.openId,
-      lastSignedIn: signedInAt,
-    });
-
+    // Resolve authorization on every request; never create an account from a session.
+    const user = await db.getUserByOpenId(session.openId, session.name);
+    if (!user || user.role === "pending") throw accessDenied();
     return user;
   }
 }
@@ -329,28 +312,19 @@ class SDKServer {
 const CRON_OPEN_ID_PREFIX = "cron_";
 
 /** Result of `sdk.authenticateRequest`. Cron callbacks set `isCron=true` and `taskUid`; see `the Webdev skill references/scheduled-work.md`. */
-export type AuthenticatedUser = User & {
-  taskUid?: string;
-  isCron?: boolean;
-};
+export type AuthenticatedUser = db.AuthUser;
 
 function buildCronUser(
   userInfo: GetUserInfoWithJwtResponse
 ): AuthenticatedUser {
-  const now = new Date();
   return {
-    id: -1,
     openId: userInfo.openId,
     name: userInfo.name || "Manus Scheduled Task",
     email: null,
-    loginMethod: null,
     role: "user",
-    createdAt: now,
-    updatedAt: now,
-    lastSignedIn: now,
     taskUid: userInfo.taskUid ?? undefined,
     isCron: true,
-  } as AuthenticatedUser;
+  };
 }
 
 export const sdk = new SDKServer();
