@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ArrowDownLeft, ArrowLeft, ArrowUpLeft, BarChart3, Building2, CheckCircle2, ChevronDown, Clock3, Droplets, FileBarChart2, FileCheck2, FileText, MoreHorizontal, Recycle, Wind } from 'lucide-react';
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { categories, companyName, faNumber, periodLabel, type Category, type Company, type Report } from './data';
 
 export type View = 'dashboard' | 'water' | 'waste' | 'air' | 'indicators' | 'analytics' | 'archive' | 'companies';
@@ -50,6 +50,31 @@ function ReportsChart({ reports }: { reports: Report[] }) {
   </AreaChart></ResponsiveContainer></div>;
 }
 
+const comparisonCategories: Category[] = ['water', 'waste', 'air'];
+function numericValue(report: Report | undefined, key: string) {
+  const value = report?.values[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value.replace(/,/g, '')))) return Number(value.replace(/,/g, ''));
+  return null;
+}
+
+function SemiannualComparison({ reports, isAdmin }: { reports: Report[]; isAdmin: boolean }) {
+  const availableYears = useMemo(() => [...new Set(reports.filter(report => report.period !== 0).map(report => report.year))].sort((a, b) => b - a), [reports]);
+  const [category, setCategory] = useState<Category>('water');
+  const [year, setYear] = useState('');
+  const definition = categories[category];
+  const metrics = definition.fields.filter(field => field.type !== 'text');
+  const [metric, setMetric] = useState(metrics[0]?.key ?? '');
+  const activeYear = year && availableYears.includes(Number(year)) ? Number(year) : availableYears[0];
+  const previousYear = activeYear ? activeYear - 1 : 0;
+  const current = (period: 1 | 2) => reports.find(report => report.category === category && report.year === activeYear && report.period === period && report.status === 'submitted');
+  const previous = (period: 1 | 2) => reports.find(report => report.category === category && report.year === previousYear && report.period === period && report.status === 'submitted');
+  const chartData = [1, 2].map(period => ({ name: period === 1 ? 'نیمسال اول' : 'نیمسال دوم', current: numericValue(current(period as 1 | 2), metric), previous: numericValue(previous(period as 1 | 2), metric) })).filter(row => row.current !== null || row.previous !== null);
+  const selectedField = definition.fields.find(field => field.key === metric);
+  const hasPrevious = chartData.some(row => row.previous !== null);
+  return <section className="panel comparison-panel"><div className="panel-heading"><div><div className="panel-title"><span className="mini-icon"><BarChart3 size={17}/></span><h2>مقایسه عملکرد شش‌ماهه</h2></div><p>{isAdmin ? 'مقایسه گزارش‌های موجود در نمای مدیریتی' : 'مقایسه نیمسال‌های امسال با سال قبل'}</p></div><span className="comparison-badge">مبنای مقایسه: ارسال‌شده</span></div><div className="comparison-controls"><label>حوزه<select value={category} onChange={event => { const next = event.target.value as Category; setCategory(next); setMetric(categories[next].fields.find(field => field.type !== 'text')?.key ?? ''); }}>{comparisonCategories.map(item => <option value={item} key={item}>{categories[item].label}</option>)}</select></label><label>شاخص<select value={metric} onChange={event => setMetric(event.target.value)}>{metrics.map(field => <option value={field.key} key={field.key}>{field.label}</option>)}</select></label><label>سال<select value={activeYear || ''} onChange={event => setYear(event.target.value)}><option value="">آخرین سال</option>{availableYears.map(item => <option value={item} key={item}>{faNumber(String(item))}</option>)}</select></label></div>{!activeYear || !chartData.length ? <div className="comparison-empty">برای این حوزه هنوز گزارش شش‌ماهه ارسال‌شده وجود ندارد.</div> : <><div className="comparison-meta"><strong>{selectedField?.label}</strong><span>{selectedField?.unit ?? 'بدون واحد'} · سال {faNumber(String(activeYear))} در برابر {faNumber(String(previousYear))}</span>{!hasPrevious && <em>برای سال قبل داده‌ای ثبت نشده است.</em>}</div><div className="comparison-chart" dir="ltr"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData} margin={{ top: 12, right: 10, left: -16, bottom: 0 }}><CartesianGrid stroke="#eef2ef" vertical={false} strokeDasharray="4 6"/><XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: '#8fa097', fontSize: 11, fontFamily: 'Vazirmatn' }}/><YAxis tickLine={false} axisLine={false} tick={{ fill: '#a6b2ab', fontSize: 10, fontFamily: 'Vazirmatn' }}/><Tooltip contentStyle={{ border: '1px solid #e5ece7', borderRadius: 12, direction: 'rtl', fontFamily: 'Vazirmatn', fontSize: 12 }} formatter={(value: unknown, name: string) => [typeof value === 'number' ? faNumber(value) : '—', name === 'current' ? `سال ${faNumber(String(activeYear))}` : `سال ${faNumber(String(previousYear))}`]}/><Legend verticalAlign="top" align="right" iconType="circle" formatter={(value: string) => value === 'current' ? `سال ${faNumber(String(activeYear))}` : `سال ${faNumber(String(previousYear))}`} /><Bar dataKey="previous" name="previous" fill="#d9e5dc" radius={[5,5,0,0]} maxBarSize={26}/><Bar dataKey="current" name="current" fill={definition.color} radius={[5,5,0,0]} maxBarSize={26}/></BarChart></ResponsiveContainer></div></>}</section>;
+}
+
 export function Dashboard({ reports, companies, demo, isAdmin, setView, openReport }: DashboardProps) {
   const years = useMemo(() => [...new Set(reports.map(report => report.year))].sort((a, b) => b - a), [reports]);
   const [selectedYear, setSelectedYear] = useState('all');
@@ -71,6 +96,7 @@ export function Dashboard({ reports, companies, demo, isAdmin, setView, openRepo
     </section>
     <section className="dashboard-grid"><div className="panel trend-panel"><div className="panel-heading"><div><div className="panel-title"><span className="mini-icon"><BarChart3 size={17}/></span><h2>روند گزارش‌دهی</h2></div><p>تعداد گزارش‌ها به تفکیک حوزه و دوره</p></div><button className="small-select" onClick={() => setView('analytics')}>مشاهده تحلیل <ChevronDown size={14}/></button></div><div className="chart-legend"><span><i className="legend-water"/>آب و پساب</span><span><i className="legend-waste"/>پسماند</span><span><i className="legend-air"/>هوا</span></div><ReportsChart reports={visibleReports}/></div>
       <div className="panel overview-panel"><div className="panel-heading"><div><div className="panel-title"><span className="mini-icon"><CheckCircle2 size={17}/></span><h2>وضعیت گزارش‌ها</h2></div><p>نگاهی به گزارش‌های موجود</p></div><MoreHorizontal size={20} color="#a4b1aa"/></div><div className="donut-wrap"><div className="donut" style={{ background: `conic-gradient(#4a9a75 0% ${ratio}%, #e9f0eb ${ratio}% 100%)` }}><div><strong>{reports.length ? `${faNumber(ratio)}٪` : '—'}</strong><span>{reports.length ? 'ارسال شده' : 'داده‌ای نیست'}</span></div></div></div><div className="donut-stats"><div><i className="dot-green"/><span>ارسال شده</span><b>{faNumber(submitted)}</b></div><div><i className="dot-light"/><span>پیش‌نویس</span><b>{faNumber(drafts)}</b></div></div></div></section>
+    <SemiannualComparison reports={visibleReports} isAdmin={isAdmin}/>
     <section className="bottom-grid"><div className="panel recent-panel"><div className="panel-heading recent-heading"><div><div className="panel-title"><span className="mini-icon"><FileText size={17}/></span><h2>آخرین گزارش‌ها</h2></div><p>فهرست آخرین گزارش‌های موجود در سامانه</p></div><button className="text-link" onClick={() => setView('archive')}>مشاهده همه <ArrowLeft size={15}/></button></div><ReportTable reports={sorted.slice(0, 5)} companies={companies} openReport={openReport}/></div>
       <div className="panel quick-panel"><div className="panel-heading"><div><div className="panel-title"><span className="mini-icon"><ArrowDownLeft size={17}/></span><h2>دسترسی سریع</h2></div><p>ثبت اطلاعات در حوزه‌های مختلف</p></div></div><div className="quick-list">{orderedCategories.map(category => { const item = categories[category]; const Icon = item.icon; return <button key={category} onClick={() => setView(category)}><span className={`quick-icon icon-${category}`}><Icon size={18}/></span><span><strong>{item.label}</strong><small>{category === 'indicators' ? 'گزارش سالیانه' : 'گزارش شش‌ماهه'}</small></span><ArrowLeft size={16}/></button>; })}</div></div></section>
   </>;
