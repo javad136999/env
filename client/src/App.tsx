@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ArrowLeft, BarChart3, Bell, Building2, Check, ChevronDown, ChevronLeft, CircleHelp, Download, Droplets, FileBarChart2, FileText, LayoutDashboard, Leaf, Menu, PanelRightClose, Recycle, RefreshCw, ShieldCheck, Wind, X } from 'lucide-react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { AlertCircle, ArrowLeft, BarChart3, Bell, Building2, Check, ChevronDown, ChevronLeft, Droplets, FileBarChart2, FileText, LayoutDashboard, Leaf, LogIn, Menu, PanelRightClose, Recycle, RefreshCw, ShieldCheck, Wind, X } from 'lucide-react';
 import { Analytics, Dashboard, type View } from './enviro/Dashboard';
 import { Archive, Companies } from './enviro/Archive';
 import { ReportForm } from './enviro/ReportForm';
 import { categories, companyName, demoCompanies, demoReports, faNumber, type Category, type Company, type EnvContext, type Report } from './enviro/data';
 import { envFetch } from './enviro/api';
-import { LocalPasswordChange, SupabaseLogin } from './components/SupabaseLogin';
+import { LocalPasswordChange } from './components/SupabaseLogin';
 import { supabase } from './lib/supabase';
 
 const navReports: { id: View; label: string; icon: typeof Droplets }[] = [
@@ -80,6 +80,7 @@ function App() {
     } catch { setExportMessage('خروج ناموفق بود؛ نشست شما همچنان فعال است.'); }
   }
   if (context?.authenticated && context.mustChangePassword) return <LocalPasswordChange onComplete={() => setReload(value => value + 1)} />;
+  if (context?.authenticated !== true) return <LandingPage onSignedIn={() => setReload(value => value + 1)} connectionError={connectionError} loading={loading} />;
   const statusText = loading ? 'در حال بررسی اتصال' : connected ? 'متصل به سامانه' : 'نمایش نمونه';
   return <div className="app-shell" dir="rtl">
     {mobileOpen && <button className="mobile-backdrop" aria-label="بستن منو" onClick={() => setMobileOpen(false)}/>}
@@ -92,7 +93,6 @@ function App() {
       {noticeOpen && <div className="notice-popover"><div><strong>راهنمای سامانه</strong><button onClick={() => setNoticeOpen(false)} aria-label="بستن"><X size={16}/></button></div><p>از منوی سمت راست برای ثبت گزارش‌های شش‌ماهه و شاخص‌های سالیانه استفاده کنید. در آرشیو می‌توانید گزارش‌ها را جست‌وجو و خروجی دریافت کنید.</p><small>{demo ? 'در حالت نمونه، هیچ تغییری در سرور ذخیره نمی‌شود.' : 'وضعیت دسترسی و اطلاعات از سرور دریافت می‌شود.'}</small>{connected && <button className="outline-btn" onClick={logout}>خروج از حساب</button>}</div>}
       <main className="main-content">
         <div className={`connection-banner ${connected ? 'connected-banner' : ''}`}><span className="banner-icon">{connected ? <Check size={17}/> : <AlertCircle size={18}/>}</span><div><strong>{loading ? 'در حال بررسی وضعیت اتصال' : connected ? 'اتصال سامانه برقرار است' : 'نمایش نمونه؛ اطلاعات واقعی نیست'}</strong><span>{loading ? 'تا زمان دریافت پاسخ سرور، داده‌های نمونه نمایش داده می‌شوند.' : connected ? 'اطلاعات این نما از پایگاه داده سامانه دریافت شده‌اند.' : connectionError || (context?.user?.role === 'pending' ? 'حساب هنوز به شرکت یا نقش اختصاص داده نشده است؛ ثبت واقعی در دسترس نیست.' : context?.configured && !context.authenticated ? 'دسترسی کاربر تأیید نشده است؛ ثبت واقعی در دسترس نیست.' : 'پایگاه داده سامانه هنوز پیکربندی نشده است؛ ثبت واقعی در دسترس نیست.')}</span></div>{!connected && <button onClick={() => setReload(value => value + 1)}><RefreshCw size={14}/> بررسی مجدد</button>}</div>
-        {context?.authenticated !== true && <SupabaseLogin onSignedIn={() => setReload(value => value + 1)} />}
         {demo && <div className="demo-controls"><div><span className="demo-tag">نمایش نمونه</span><span>پیش‌نمایش رابط، بدون ورود واقعی یا ذخیره دائمی</span></div><div className="role-controls"><span>پیش‌نمایش پنل:</span><button className={demoRole === 'admin' ? 'selected' : ''} onClick={() => { setDemoRole('admin'); if (view === 'companies') setView('dashboard'); }}>مدیریت</button><button className={demoRole === 'company' ? 'selected' : ''} onClick={() => { setDemoRole('company'); if (view === 'companies') setView('dashboard'); }}>شرکت</button>{demoRole === 'company' && <select aria-label="انتخاب شرکت نمونه" value={demoCompany} onChange={event => setDemoCompany(event.target.value)}>{demoCompanies.map(company => <option value={company.id} key={company.id}>{company.name}</option>)}</select>}</div></div>}
         {exportMessage && <div className="export-message" role="status"><InfoIcon/>{exportMessage}<button onClick={() => setExportMessage('')} aria-label="بستن پیام"><X size={15}/></button></div>}
         {view === 'dashboard' && <Dashboard reports={reports} companies={companies} demo={demo} isAdmin={isAdmin} setView={navigate} openReport={openReport}/>}
@@ -104,6 +104,45 @@ function App() {
       </main>
     </div>
   </div>;
+}
+type LoginPortal = 'company' | 'admin';
+function LoginCard({ portal, onSignedIn }: { portal: LoginPortal; onSignedIn: () => void }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const company = portal === 'company';
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setMessage(''); setBusy(true);
+    try {
+      const response = await envFetch('/api/env/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username.trim(), password, portal }) });
+      const payload = await response.json() as { error?: { message?: string } };
+      if (!response.ok) throw new Error(payload.error?.message || 'ورود انجام نشد.');
+      setPassword(''); onSignedIn();
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'ورود انجام نشد.'); }
+    finally { setBusy(false); }
+  }
+  return <section className={`landing-login-card ${company ? 'company-portal' : 'admin-portal'}`} aria-labelledby={`${portal}-login-title`}>
+    <div className="landing-card-icon">{company ? <Building2 size={23}/> : <ShieldCheck size={23}/>}</div>
+    <div className="landing-card-heading"><span>{company ? 'ورود اختصاصی شرکت‌ها' : 'ورود مدیریت سامانه'}</span><h2 id={`${portal}-login-title`}>{company ? 'پنل پتروشیمی' : 'مرکز مدیریت محیط زیست'}</h2></div>
+    <p className="landing-card-description">{company ? 'ثبت گزارش‌های آب، پساب، پسماند، هوا و شاخص‌های وزارت نفت' : 'مدیریت شرکت‌ها، مشاهده گزارش‌ها و نظارت یکپارچه بر داده‌ها'}</p>
+    <form onSubmit={submit} className="landing-login-form">
+      <label>{company ? 'نام کاربری شرکت' : 'نام کاربری مدیر'}<input value={username} onChange={event => setUsername(event.target.value)} dir="ltr" autoComplete="username" placeholder={company ? 'نام پتروشیمی' : 'hse.pazargad@gmail.com'} required /></label>
+      <label>رمز عبور<input type="password" value={password} onChange={event => setPassword(event.target.value)} dir="ltr" autoComplete="current-password" placeholder="رمز حساب" required /></label>
+      <button type="submit" disabled={busy}><LogIn size={17}/>{busy ? 'در حال ورود…' : company ? 'ورود به پنل شرکت' : 'ورود به پنل مدیریت'}</button>
+    </form>
+    {message && <p className="landing-login-error" role="alert">{message}</p>}
+  </section>;
+}
+function LandingPage({ onSignedIn, connectionError, loading }: { onSignedIn: () => void; connectionError: string; loading: boolean }) {
+  return <main className="landing-page" dir="rtl">
+    <div className="landing-orbit landing-orbit-one"/><div className="landing-orbit landing-orbit-two"/>
+    <header className="landing-header"><div className="landing-brand"><span className="landing-brand-mark"><Leaf size={25}/></span><div><strong>زیست‌نگار</strong><small>سامانه یکپارچه گزارش محیط زیست پتروشیمی</small></div></div><div className="landing-status"><i/>{loading ? 'در حال اتصال به سامانه' : 'سامانه آماده دریافت اطلاعات'}</div></header>
+    <section className="landing-hero"><div className="landing-copy"><div className="landing-eyebrow"><Leaf size={15}/> محیط زیست، مسئولیت امروز و سرمایه فردا</div><h1>گزارش‌دهی هوشمند<br/><em>برای صنعت سبز پتروشیمی</em></h1><p>سامانه زیست‌نگار، مسیر ثبت، پایش و تحلیل گزارش‌های محیط زیستی شرکت‌های پتروشیمی را یکپارچه و شفاف می‌کند.</p><div className="landing-highlights"><span><Droplets size={16}/> آب و پساب</span><span><Recycle size={16}/> پسماند</span><span><Wind size={16}/> هوا و انتشار</span></div></div><div className="landing-illustration" aria-label="طرح محیط زیست صنعت پتروشیمی"><div className="illustration-sun"/><div className="illustration-cloud cloud-one"/><div className="illustration-cloud cloud-two"/><div className="illustration-mountain mountain-back"/><div className="illustration-mountain mountain-front"/><div className="illustration-plant plant-one"><span/><span/><span/></div><div className="illustration-plant plant-two"><span/><span/><span/></div><div className="illustration-tank"><b/><i/><i/><i/></div><div className="illustration-stack"><span/><span/><span/></div><div className="illustration-pipe"/></div></section>
+    <section className="landing-logins"><div className="landing-section-heading"><span>ورود به سامانه</span><h2>مسیر ورود خود را انتخاب کنید</h2><p>هر کاربر فقط از درگاه اختصاصی خود وارد محیط سامانه می‌شود.</p></div><div className="landing-login-grid"><LoginCard portal="company" onSignedIn={onSignedIn}/><LoginCard portal="admin" onSignedIn={onSignedIn}/></div></section>
+    {connectionError && <div className="landing-connection-error" role="status"><AlertCircle size={16}/>{connectionError}</div>}
+    <footer className="landing-footer"><span>زیست‌نگار <b/> سامانه محیط زیست صنعت پتروشیمی</span><span>ثبت دقیق امروز، آینده‌ای سبزتر</span></footer>
+  </main>;
 }
 function InfoIcon() { return <ShieldCheck size={17}/>; }
 export default App;

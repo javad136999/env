@@ -83,9 +83,11 @@ export function registerEnvRoutes(app: Express) {
     try {
       if (!hasSupabaseConfiguration()) throw notConfigured();
       const body: unknown = req.body;
-      if (!validObject(body) || Object.keys(body).some(key => key !== "username" && key !== "password") || !validText(body.username, 120) || typeof body.password !== "string" || body.password.length < 1 || body.password.length > 256) throw new EnvError("LOGIN_INVALID", "نام کاربری و رمز عبور معتبر نیستند.", 400);
+      if (!validObject(body) || Object.keys(body).some(key => !["username", "password", "portal"].includes(key)) || !validText(body.username, 120) || typeof body.password !== "string" || body.password.length < 1 || body.password.length > 256 || (body.portal !== undefined && body.portal !== "company" && body.portal !== "admin")) throw new EnvError("LOGIN_INVALID", "نام کاربری و رمز عبور معتبر نیستند.", 400);
       const found = await findAccountByUsername(body.username);
       if (!found || !verifyPassword(body.password, found.password_hash)) throw new EnvError("LOGIN_FAILED", "نام کاربری یا رمز عبور نادرست است.", 401);
+      if (body.portal === "company" && found.role !== "company") throw new EnvError("PORTAL_ROLE_MISMATCH", "این حساب برای ورود مدیریت ثبت شده است.", 403);
+      if (body.portal === "admin" && found.role !== "admin") throw new EnvError("PORTAL_ROLE_MISMATCH", "این حساب برای ورود شرکت ثبت شده است.", 403);
       if (!process.env.MANUS_JWT_SECRET && !process.env.SUPABASE_SERVICE_ROLE_KEY) throw notConfigured();
       const token = await new SignJWT({ openId: found.open_id, appId: "local", name: body.username, email: found.email ?? "" }).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setExpirationTime(Math.floor((Date.now() + LOCAL_SESSION_MS) / 1000)).sign(localKey());
       setLocalCookie(res, token);
