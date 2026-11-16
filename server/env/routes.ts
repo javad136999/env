@@ -7,7 +7,7 @@ import { sdk, type SupabaseIdentity } from "../_core/sdk";
 import { ENV } from "../_core/env";
 import { EnvError, accessDenied, notConfigured, reportConflict } from "./errors";
 import { assertLegacyValuesUnchanged, parseReport, preserveLegacyValues, reportsCsv, reportWarnings } from "./reports";
-import { findAccount, findAccountByUsername, findCompany, findReport, hasSupabaseConfiguration, insertReport, listAccounts, listCompanies, listReports, saveCompany, setAccountMembership, setAccountPassword, updateReport, type AccountRow } from "./supabase";
+import { findAccount, findAccountByUsername, findCompany, findReport, hasSupabaseConfiguration, insertReport, listAccounts, listCompanies, listReports, saveCompany, setAccountCredentials, setAccountMembership, setAccountPassword, updateReport, type AccountRow } from "./supabase";
 
 function sendError(res: Response, error: unknown, extra: Record<string, unknown> = {}) {
   const safe = error instanceof EnvError ? error : new EnvError("INTERNAL_ERROR", "خطای داخلی در پردازش درخواست.", 500);
@@ -70,10 +70,11 @@ function validObject(value: unknown): value is Record<string, unknown> {
 function adminAccount(row: AccountRow) {
   if (!validText(row.open_id, 200) || (row.role !== "pending" && row.role !== "company" && row.role !== "admin") ||
     (row.name !== null && typeof row.name !== "string") || (row.email !== null && typeof row.email !== "string") ||
-    (row.company_id !== null && !validText(row.company_id, 200))) {
+    (row.company_id !== null && !validText(row.company_id, 200)) ||
+    (row.username !== undefined && row.username !== null && !validText(row.username, 120))) {
     throw new EnvError("DATABASE_RESPONSE_INVALID", "اطلاعات حساب معتبر نیست.", 503);
   }
-  return { openId: row.open_id, name: row.name, email: row.email, role: row.role, companyId: row.company_id };
+  return { openId: row.open_id, name: row.name, email: row.email, username: row.username ?? null, role: row.role, companyId: row.company_id };
 }
 
 export function registerEnvRoutes(app: Express) {
@@ -150,6 +151,26 @@ export function registerEnvRoutes(app: Express) {
       const companyId = body.role === "pending" ? null : body.companyId as string;
       if (companyId !== null && !await findCompany(companyId)) throw new EnvError("COMPANY_UNKNOWN", "شرکت انتخاب‌شده وجود ندارد.", 400);
       const updated = await setAccountMembership(body.openId, body.role, companyId);
+      res.json({ account: adminAccount(updated) });
+    } catch (error) { sendError(res, error); }
+  });
+
+  app.post("/api/env/admin/accounts/credentials", async (req, res) => {
+    noStore(res);
+    try {
+      if (!req.is("application/json")) throw new EnvError("CONTENT_TYPE_INVALID", "درخواست باید application/json باشد.", 415);
+      await requireAdmin(req);
+      const body: unknown = req.body;
+      if (!validObject(body) || Object.keys(body).some(key => !["openId", "username", "password"].includes(key)) ||
+        !validText(body.openId, 200) || !validText(body.username, 120) ||
+        (body.password !== undefined && body.password !== null && (typeof body.password !== "string" || body.password.length < 8 || body.password.length > 256))) {
+        throw new EnvError("CREDENTIALS_INVALID", "نام کاربری معتبر و رمز جدید حداقل ۸ نویسه‌ای وارد کنید.", 400);
+      }
+      const existing = await findAccount(body.openId);
+      if (!existing || existing.open_id !== body.openId) throw new EnvError("ACCOUNT_NOT_FOUND", "حساب مورد نظر وجود ندارد.", 404);
+      const duplicate = await findAccountByUsername(body.username);
+      if (duplicate && duplicate.open_id !== body.openId) throw new EnvError("USERNAME_TAKEN", "این نام کاربری قبلاً استفاده شده است.", 409);
+      const updated = await setAccountCredentials(body.openId, body.username, typeof body.password === "string" && body.password ? hashPassword(body.password) : undefined);
       res.json({ account: adminAccount(updated) });
     } catch (error) { sendError(res, error); }
   });

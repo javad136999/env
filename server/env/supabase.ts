@@ -15,6 +15,7 @@ export type AccountRow = {
   email: string | null;
   role: string | null;
   company_id: string | null;
+  username?: string | null;
 };
 export type LocalAccountRow = AccountRow & {
   username: string | null;
@@ -97,8 +98,16 @@ export async function setAccountPassword(openId: string, passwordHash: string, m
   return result[0];
 }
 
+export async function setAccountCredentials(openId: string, username: string, passwordHash?: string): Promise<LocalAccountRow> {
+  const body: Record<string, unknown> = { username };
+  if (passwordHash) { body.password_hash = passwordHash; body.must_change_password = true; }
+  const result = rows<LocalAccountRow>(await request<unknown>("env_accounts", query({ select: "open_id,name,email,role,company_id,username,password_hash,must_change_password", open_id: `eq.${openId}`, limit: "1" }), "PATCH", body, "return=representation"));
+  if (result.length !== 1 || result[0].open_id !== openId) throw new EnvError("ACCOUNT_NOT_FOUND", "حساب مورد نظر وجود ندارد.", 404);
+  return result[0];
+}
+
 export async function listAccounts(): Promise<AccountRow[]> {
-  return allRows<AccountRow>("env_accounts", { select: "open_id,name,email,role,company_id", order: "open_id.asc" });
+  return allRows<AccountRow>("env_accounts", { select: "open_id,name,email,role,company_id,username", order: "open_id.asc" });
 }
 
 export async function setAccountMembership(openId: string, role: "admin" | "company" | "pending", companyId: string | null): Promise<AccountRow> {

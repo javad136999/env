@@ -4,7 +4,7 @@ import { envFetch } from './api';
 import { faNumber, type Company } from './data';
 
 type AccountRole = 'pending' | 'company' | 'admin';
-type Account = { openId: string; name: string | null; email: string | null; role: AccountRole; companyId: string | null };
+type Account = { openId: string; name: string | null; email: string | null; username: string | null; role: AccountRole; companyId: string | null };
 type Props = { companies: Company[]; enabled: boolean; onCompanyCreated: (company: Company) => void; onRefreshContext: () => void };
 type Message = { kind: 'success' | 'error'; text: string; accountId?: string };
 
@@ -16,7 +16,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 function isAccount(value: unknown): value is Account {
   return isObject(value) && typeof value.openId === 'string' && value.openId.length > 0 &&
-    (value.name === null || typeof value.name === 'string') && (value.email === null || typeof value.email === 'string') &&
+    (value.name === null || typeof value.name === 'string') && (value.email === null || typeof value.email === 'string') && (value.username === null || typeof value.username === 'string') &&
     (value.role === 'pending' || value.role === 'company' || value.role === 'admin') &&
     (value.companyId === null || typeof value.companyId === 'string');
 }
@@ -109,6 +109,21 @@ export function AccessManagement({ companies, enabled, onCompanyCreated, onRefre
     finally { setBusy(''); }
   }
 
+  async function saveCredentials(account: Account, username: string, password: string) {
+    if (locked) return;
+    const nextUsername = username.trim();
+    if (!nextUsername || nextUsername.length > 120) { setMessage({ kind: 'error', text: 'نام کاربری را به‌صورت معتبر و حداکثر ۱۲۰ نویسه وارد کنید.', accountId: account.openId }); return; }
+    if (password && password.length < 8) { setMessage({ kind: 'error', text: 'رمز جدید باید حداقل ۸ نویسه باشد.', accountId: account.openId }); return; }
+    setBusy(`${account.openId}:credentials`);
+    try {
+      const data = await readResponse(await envFetch('/api/env/admin/accounts/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ openId: account.openId, username: nextUsername, ...(password ? { password } : {}) }) }));
+      if (!isObject(data) || !isAccount(data.account) || data.account.openId !== account.openId || data.account.username !== nextUsername) throw new Error('پاسخ تغییر اعتبارنامه قابل تأیید نیست؛ فهرست را به‌روزرسانی کنید.');
+      setAccounts(current => current?.map(item => item.openId === account.openId ? data.account as Account : item) ?? null);
+      setMessage({ kind: 'success', text: password ? 'نام کاربری و رمز جدید ذخیره شد؛ کاربر در ورود بعدی باید رمز را تغییر دهد.' : 'نام کاربری ذخیره شد.', accountId: account.openId });
+    } catch (error) { setMessage({ kind: 'error', text: errorMessage(error), accountId: account.openId }); }
+    finally { setBusy(''); }
+  }
+
   return <section aria-labelledby="access-heading" style={{ marginTop: 24 }}>
     <div className="panel form-panel">
       <div className="panel-heading"><div><div className="panel-title"><span className="mini-icon"><ShieldCheck size={17}/></span><h2 id="access-heading">مدیریت دسترسی حساب‌ها</h2></div><p>ساخت شرکت و تخصیص نقش و شرکت به حساب‌های واردشده</p></div></div>
@@ -128,15 +143,18 @@ export function AccessManagement({ companies, enabled, onCompanyCreated, onRefre
       {loading && <div className="empty-card" role="status">در حال دریافت حساب‌ها...</div>}
       {enabled && !loading && loadError && <div className="form-message error" role="alert">{loadError}</div>}
       {enabled && !loading && !loadError && accounts && accounts.length === 0 && <div className="empty-card">حسابی برای نمایش وجود ندارد.</div>}
-      {enabled && !loading && !loadError && orderedAccounts.length > 0 && <div className="company-grid" style={{ marginTop: 16 }}>{orderedAccounts.map(account => <AccountEditor key={`${account.openId}:${account.role}:${account.companyId ?? ''}`} account={account} companies={companies} locked={locked} saving={busy === account.openId} message={message?.accountId === account.openId ? message : null} onSave={saveAccount}/>)}</div>}
+      {enabled && !loading && !loadError && orderedAccounts.length > 0 && <div className="company-grid" style={{ marginTop: 16 }}>{orderedAccounts.map(account => <AccountEditor key={`${account.openId}:${account.role}:${account.companyId ?? ''}:${account.username ?? ''}`} account={account} companies={companies} locked={locked} saving={busy === account.openId} credentialsSaving={busy === `${account.openId}:credentials`} message={message?.accountId === account.openId ? message : null} onSave={saveAccount} onSaveCredentials={saveCredentials}/>)}</div>}
     </div>
   </section>;
 }
 
-type AccountEditorProps = { account: Account; companies: Company[]; locked: boolean; saving: boolean; message: Message | null; onSave: (account: Account, role: AccountRole, company: string) => void };
-function AccountEditor({ account, companies, locked, saving, message, onSave }: AccountEditorProps) {
+type AccountEditorProps = { account: Account; companies: Company[]; locked: boolean; saving: boolean; credentialsSaving: boolean; message: Message | null; onSave: (account: Account, role: AccountRole, company: string) => void; onSaveCredentials: (account: Account, username: string, password: string) => void };
+function AccountEditor({ account, companies, locked, saving, credentialsSaving, message, onSave, onSaveCredentials }: AccountEditorProps) {
   const [role, setRole] = useState<AccountRole>(account.role);
   const [company, setCompany] = useState(account.companyId ?? '');
+  const [username, setUsername] = useState(account.username ?? '');
+  const [password, setPassword] = useState('');
+  useEffect(() => { setUsername(account.username ?? ''); setPassword(''); }, [account.username]);
   const currentCompany = account.companyId ? companies.find(item => item.id === account.companyId) : undefined;
   const changed = role !== account.role || (role === 'pending' ? account.companyId !== null : company !== account.companyId);
   return <form className="panel company-card" onSubmit={event => { event.preventDefault(); onSave(account, role, company); }}>
@@ -153,8 +171,13 @@ function AccountEditor({ account, companies, locked, saving, message, onSave }: 
         <option value="">{role === 'pending' ? 'بدون شرکت' : 'انتخاب شرکت'}</option>{companies.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
       </select></label>
     </div>
+    <div className="form-grid" style={{ marginTop: 16 }}>
+      <label>نام کاربری<input value={username} onChange={event => setUsername(event.target.value)} disabled={locked} maxLength={120} dir="ltr" required placeholder="نام کاربری شرکت"/></label>
+      <label>رمز جدید (اختیاری)<input value={password} onChange={event => setPassword(event.target.value)} disabled={locked} minLength={8} maxLength={256} dir="ltr" type="password" placeholder="برای بدون تغییر خالی بگذارید"/></label>
+    </div>
     {account.role === 'admin' && <p>کاهش نقش این مدیر از طریق سرور مجاز نیست.</p>}
     {message && <div className={`form-message ${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}</div>}
     <button className="outline-btn" type="submit" style={{ marginTop: 16, opacity: locked || !changed || (role !== 'pending' && !company) ? 0.5 : 1 }} disabled={locked || !changed || (role !== 'pending' && !company)}>{saving ? 'در حال ذخیره...' : 'ذخیره دسترسی'}</button>
+    <button className="primary-btn" type="button" style={{ marginTop: 10, opacity: locked || credentialsSaving || !username.trim() ? 0.5 : 1 }} disabled={locked || credentialsSaving || !username.trim()} onClick={() => onSaveCredentials(account, username, password)}>{credentialsSaving ? 'در حال ذخیره...' : 'ذخیره نام کاربری و رمز'}</button>
   </form>;
 }
