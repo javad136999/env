@@ -262,6 +262,15 @@ describe("report validation, comparisons, and CSV", () => {
     expect(warnings[1].message).toContain("صفر");
     expect(warnings[2].message).toContain("موجود نیست");
   });
+  it("uses a 30 percent threshold for annual indicators and accepts field comments", () => {
+    const prior: Report = { id: ID_A, revision: 1, updatedAt: time, companyId: "company-a", year: 1402, period: 0, category: "indicators", values: { E1: 100 }, status: "submitted" };
+    const current = parseReport({ ...payload, year: 1403, period: 0, category: "indicators", values: { E1: 129, field_comments: JSON.stringify({ E1: "تغییر تولید و توقف تعمیرات اساسی" }) } });
+    expect(current.values.field_comments).toContain("توقف تعمیرات");
+    expect(reportWarnings(current, [prior])[0].message).toContain("آستانهٔ هشدار ۳۰٪");
+    const alert = reportWarnings({ ...current, values: { E1: 131 } }, [prior])[0];
+    expect(alert.message).toContain("آستانهٔ ۳۰٪ رسیده");
+    expect(() => parseReport({ ...current, values: { E1: 129, field_comments: JSON.stringify({ unknown: "bad" }) } })).toThrow();
+  });
   it("prefixes formula-like CSV cells and emits BOM", () => {
     const csv = reportsCsv([{ id: ID_A, revision: 1, updatedAt: time, companyId: "  =CMD(1)", year: 1403, period: 1, category: "water", values: { water_consumption: 1 }, status: "draft" }]);
     expect(csv.startsWith("\uFEFF")).toBe(true);

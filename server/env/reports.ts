@@ -19,7 +19,7 @@ const FIELDS: Record<Category, readonly string[]> = {
   water: ["water_consumption", "wastewater_generated", "water_recycled", "wastewater_discharged", "water_sources", "water_effluents"],
   waste: ["hazardous_waste", "non_hazardous_waste", "recycled_waste", "disposed_waste", "waste_streams"],
   air: ["greenhouse_gases", "sox", "nox", "voc", "air_flaring", "air_combustion", "air_flare_composition", "air_feed_products"],
-  indicators: ["E1", "E2", "E3", "E4", "E5", "E6", "E7_volume", "E7_management", "E8", "E9", "E10", "E11", "E12_amount", "E12_count", "E13", "E14", "E15", "E16", "E17", "E18_area", "E18_percent", "E19", "E20", "E20_monitored", "E20_eligible"],
+  indicators: ["E1", "E2", "E3", "E4", "E5", "E6", "E7_volume", "E7_management", "E8", "E9", "E10", "E11", "E12_amount", "E12_count", "E13", "E14", "E15", "E16", "E17", "E18_area", "E18_percent", "E19", "E20", "E20_monitored", "E20_eligible", "field_comments"],
 };
 type RowFields = { text: readonly string[]; numeric: readonly string[] };
 const ROW_FIELDS: Record<string, RowFields> = {
@@ -54,6 +54,14 @@ function validRows(value: unknown, fields: RowFields): boolean {
     );
   });
 }
+function validFieldComments(value: unknown): boolean {
+  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > 30000) return false;
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { return false; }
+  if (!object(parsed)) return false;
+  const indicatorFields = new Set(FIELDS.indicators.filter(field => field !== "field_comments"));
+  return Object.entries(parsed).every(([key, comment]) => indicatorFields.has(key) && validText(comment, 2000));
+}
 
 /** New reports omit id/revision; edits require both, including the revision read by the editor. */
 export function parseReport(input: unknown, allowLegacyCandidates = false): ReportInput {
@@ -79,6 +87,10 @@ export function parseReport(input: unknown, allowLegacyCandidates = false): Repo
     }
     if (Object.hasOwn(ROW_FIELDS, key)) {
       if (!validRows(value, ROW_FIELDS[key])) throw invalidReport();
+      continue;
+    }
+    if (category === "indicators" && key === "field_comments") {
+      if (!validFieldComments(value)) throw invalidReport();
       continue;
     }
     if (category === "indicators" && key === "E7_management") {
@@ -160,8 +172,9 @@ export function reportWarnings(report: ReportInput, existing: Report[]): Warning
     const averageChange = average !== null && Number.isFinite(average) ? change(current, average) : null;
     const annualText = !previous ? "برای دورهٔ مشابه سال قبل سابقهٔ عددی موجود نیست" : previous.value === 0 ? "مبنای سال قبل صفر است و درصد تغییر تعریف نمی‌شود" : annual === null ? "درصد تغییر نسبت به سال قبل قابل محاسبه نیست" : `تغییر نسبت به سال قبل ${formatted(annual)}٪ (مبنای ${formatted(previous.value)})`;
     const averageText = average === null ? "میانگین تاریخی در دسترس نیست" : average === 0 ? `میانگین ${points.length} دورهٔ قبلی صفر است و درصد آن تعریف نمی‌شود` : averageChange === null ? "مقایسه با میانگین تاریخی قابل محاسبه نیست" : `تغییر نسبت به میانگین ${points.length} دورهٔ قبلی ${formatted(averageChange)}٪ (میانگین ${formatted(average)})`;
-    const unusual = (annual !== null && Math.abs(annual) >= 20) || (averageChange !== null && Math.abs(averageChange) >= 20);
-    warnings.push({ field, change: annual, message: `${annualText}؛ ${averageText}. ${unusual ? "تغییر به آستانهٔ پیش‌فرض ۲۰٪ رسیده یا از آن بیشتر است. " : "آستانهٔ پیش‌فرض ۲۰٪ است. "}این مقایسه تقریبی است و به‌تنهایی نشانهٔ خطا نیست.` });
+    const threshold = report.category === "indicators" ? 30 : 20;
+    const unusual = (annual !== null && Math.abs(annual) >= threshold) || (averageChange !== null && Math.abs(averageChange) >= threshold);
+    warnings.push({ field, change: annual, message: `${annualText}؛ ${averageText}. ${unusual ? `تغییر به آستانهٔ ${formatted(threshold)}٪ رسیده یا از آن بیشتر است. ` : `آستانهٔ هشدار ${formatted(threshold)}٪ است. `}این مقایسه تقریبی است و به‌تنهایی نشانهٔ خطا نیست.` });
   }
   return warnings;
 }

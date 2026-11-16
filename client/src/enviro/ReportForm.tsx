@@ -7,6 +7,15 @@ import { envFetch } from './api';
 type Props = { category: Category; companies: Company[]; reports: Report[]; initialReport?: Report; canSave: boolean; demo: boolean; setView: (view: View) => void; onSaved: (report: Report) => void };
 const normalizeNumber = (value: string) => value.replace(/[۰-۹]/g, n => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(n))).replace(/[٠-٩]/g, n => String('٠١٢٣٤٥٦٧٨٩'.indexOf(n))).replace(/,/g, '').trim();
 type InputRow = Record<string, string>;
+function readFieldComments(report?: Report): Record<string, string> {
+  try {
+    const raw = report?.values.field_comments;
+    const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === 'string'))
+      : {};
+  } catch { return {}; }
+}
 
 const indicatorSources = [
   { target: 'E7_volume', category: 'water', key: 'wastewater_generated', label: 'پساب تولیدی', sourceUnit: 'm³', targetUnit: 'm³', factor: 1 },
@@ -120,6 +129,7 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
   const [savedId, setSavedId] = useState(initialReport?.id);
   const [revision, setRevision] = useState(initialReport?.revision);
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(initialReport?.values ?? {}).map(([key, value]) => [key, String(value)])));
+  const [fieldComments, setFieldComments] = useState<Record<string, string>>(() => readFieldComments(initialReport));
   // A deliberately cleared field stays blank until the user opts back into autofill.
   const [suppressed, setSuppressed] = useState<Record<string, boolean>>({});
   const [rows, setRows] = useState<Record<string, InputRow[]>>(() => readRows(initialReport, category));
@@ -138,14 +148,15 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
     if (current === null || prior === null) return [];
     if (prior === 0) return [{ field: field.key, message: `${field.label}: مقدار دوره مشابه سال قبل صفر است؛ درصد تغییر قابل محاسبه نیست.`, change: null }];
     const change = (current - prior) / Math.abs(prior) * 100;
-    return Number.isFinite(change) && Math.abs(change) >= 20 ? [{ field: field.key, message: `${field.label}: تغییر ${faNumber(Math.abs(change))}٪ نسبت به دوره مشابه سال قبل.`, change }] : [];
+    const threshold = category === 'indicators' ? 30 : 20;
+    return Number.isFinite(change) && Math.abs(change) >= threshold ? [{ field: field.key, message: `${field.label}: تغییر ${faNumber(Math.abs(change))}٪ نسبت به دوره مشابه سال قبل.`, change }] : [];
   });
   async function submit(status: ReportStatus) {
     setMessage(null); setServerWarnings([]);
     if (!canSave) { setMessage({ kind: 'error', text: 'درخواست ثبت انجام نشد. برای ذخیره، اتصال تنظیم‌شده و دسترسی تأییدشده لازم است؛ تغییرات این فرم فقط موقت‌اند.' }); return; }
     if (!companyId || !validYear(year)) { setMessage({ kind: 'error', text: 'لطفاً شرکت و سال معتبر بین ۱۳۰۰ تا ۱۵۰۰ را انتخاب کنید.' }); return; }
     if (savedId && revision === undefined) { setMessage({ kind: 'error', text: 'نسخه گزارش برای ویرایش در دسترس نیست. اطلاعات را از سرور بازخوانی کنید.' }); return; }
-    const knownKeys = new Set([...definition.fields.map(field => field.key), ...rowSections[category].map(section => section.key)]);
+    const knownKeys = new Set([...definition.fields.map(field => field.key), ...rowSections[category].map(section => section.key), 'field_comments']);
     const output: Record<string, string | number> = Object.fromEntries(Object.entries(initialReport?.values ?? {}).filter(([key]) => !knownKeys.has(key)));
     for (const field of definition.fields) {
       const raw = (effectiveValues[field.key] ?? '').trim();
@@ -172,6 +183,10 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
       if (resultRows.length) output[section.key] = JSON.stringify(resultRows);
     }
     if (!Object.keys(output).length) { setMessage({ kind: 'error', text: 'حداقل یک مقدار را وارد کنید.' }); return; }
+    if (category === 'indicators') {
+      const comments = Object.fromEntries(Object.entries(fieldComments).filter(([, comment]) => comment.trim()).map(([key, comment]) => [key, comment.trim()]));
+      if (Object.keys(comments).length) output.field_comments = JSON.stringify(comments);
+    }
     const report: Omit<Report, 'id'> & { id?: string } = { ...(savedId ? { id: savedId, revision } : {}), companyId, year: Number(year), period: category === 'indicators' ? 0 : period, category, values: output, status };
     setSaving(true);
     try {
@@ -192,6 +207,7 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
         <div className="form-grid fields-grid">{definition.fields.map(field => {
           const suggestion = suggestions[field.key];
           const hasManualValue = !!(values[field.key] ?? '').trim();
+          const fieldWarning = category === 'indicators' ? comparisons.find(item => item.field === field.key) : undefined;
           return <div key={field.key}>
             <label>{field.label}<div className="input-unit"><input type="text" inputMode={field.type === 'text' ? 'text' : 'decimal'} value={effectiveValues[field.key] ?? ''} aria-describedby={suggestion ? `indicator-help-${field.key}` : undefined} onChange={event => {
               const nextValue = event.target.value;
@@ -205,11 +221,13 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
               {suggestion.halves?.map(half => <div key={half}>{half}</div>)}
               {suppressed[field.key] && suggestion.value !== null && <button type="button" className="text-link" onClick={() => { setSuppressed(current => ({ ...current, [field.key]: false })); setServerWarnings([]); }}>استفاده از مقدار خودکار</button>}
             </div>}
+            {fieldWarning && <div className="comparison-warning" style={{ marginTop: 8, padding: '7px 9px', border: '1px solid #f0e5c7', borderRadius: 7, color: '#a08242', fontSize: 11 }}>{fieldWarning.message}</div>}
+            {category === 'indicators' && <label style={{ marginTop: 8, fontWeight: 500 }}>علت تغییر / توضیحات<textarea value={fieldComments[field.key] ?? ''} onChange={event => setFieldComments(current => ({ ...current, [field.key]: event.target.value }))} maxLength={2000} rows={2} placeholder="در صورت تغییر قابل توجه، علت را توضیح دهید" style={{ display: 'block', width: '100%', marginTop: 6, border: '1px solid #e2ebe4', borderRadius: 8, padding: '9px 10px', resize: 'vertical', color: '#536d5c', fontSize: 11, lineHeight: 1.8 }} /></label>}
           </div>;
         })}</div>
         {rowSections[category].map(section => <div className="row-section" key={section.key}><div className="row-section-heading"><div><h3>{section.title}</h3><p>{section.description}</p></div><button className="add-row" onClick={() => setRows(current => ({ ...current, [section.key]: [...(current[section.key] ?? []), {}] }))}><Plus size={15}/> افزودن ردیف</button></div>{(rows[section.key] ?? []).length === 0 ? <div className="row-empty">هنوز ردیفی اضافه نشده است.</div> : (rows[section.key] ?? []).map((row, index) => <div className="detail-row" key={index}><div className="detail-row-top"><strong>ردیف {faNumber(index + 1)}</strong><button aria-label={`حذف ردیف ${faNumber(index + 1)} از ${section.title}`} onClick={() => setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).filter((_, rowIndex) => rowIndex !== index) }))}><Trash2 size={15}/> حذف</button></div><div className="form-grid detail-grid">{section.fields.map(field => <label key={field.key}>{field.label}<div className="input-unit"><input aria-label={`${field.label}، ردیف ${index + 1}، ${section.title}`} type="text" inputMode={field.type === 'text' ? 'text' : 'decimal'} value={row[field.key] ?? ''} onChange={event => { const nextValue = event.target.value; setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).map((item, rowIndex) => rowIndex === index ? { ...item, [field.key]: nextValue } : item) })); }} placeholder={field.placeholder || 'وارد کنید'} />{field.unit && <span dir="auto">{field.unit}</span>}</div></label>)}</div></div>)}</div>)}
         <div className="form-footer"><span><Info size={15}/> فیلد خالی به معنی داده ناموجود است، نه صفر.</span><div><button className="outline-btn" disabled={saving} onClick={() => submit('draft')}><Save size={16}/> ذخیره پیش‌نویس</button><button className="primary-btn" disabled={saving} onClick={() => submit('submitted')}><Send size={16}/> {saving ? 'در حال ارسال...' : 'ارسال گزارش'}</button></div></div>{message && <div role="alert" className={`form-message ${message.kind}`}>{message.kind === 'error' ? <AlertCircle size={18}/> : <CheckCircle2 size={18}/>}<span>{message.text}</span></div>}</section></div>
-      <aside className="form-aside"><div className="panel guidance"><div className="panel-title"><span className="mini-icon"><Info size={17}/></span><h2>راهنمای ثبت</h2></div><div className="guide-step"><b>۱</b><p><strong>انتخاب دوره</strong><small>شرکت، سال و دوره مورد نظر را انتخاب کنید.</small></p></div><div className="guide-step"><b>۲</b><p><strong>ورود اطلاعات</strong><small>مقادیر را با واحد نمایش‌داده‌شده وارد کنید.</small></p></div><div className="guide-step"><b>۳</b><p><strong>بررسی و ارسال</strong><small>پس از بررسی تغییرات، گزارش را ارسال کنید.</small></p></div></div><div className="comparison-card"><div className="comparison-title"><AlertCircle size={19}/><strong>مقایسه با دوره مشابه سال قبل</strong></div><p>{previous ? `مبنای مقایسه: ${companyName(companies, previous.companyId)}، ${periodLabel(previous)} ${faNumber(String(previous.year))}.` : 'داده‌ای از دوره مشابه سال قبل برای مقایسه وجود ندارد.'}</p><small>آستانه هشدار موقت ۲۰٪ است؛ این مقایسه تقریبی است و به‌تنهایی نشانه خطا نیست. مبنای صفر نیز نمایش داده می‌شود.</small>{comparisons.map(item => <div className="comparison-warning" key={item.field}>{item.message}</div>)}{serverWarnings.map((item, index) => <div className="comparison-warning" key={`${item.field}-${index}`}>{item.message}</div>)}</div><button className="aside-link" onClick={() => setView('analytics')}>مشاهده تحلیل گزارش‌ها <ChevronLeft size={16}/></button></aside></div>
+      <aside className="form-aside"><div className="panel guidance"><div className="panel-title"><span className="mini-icon"><Info size={17}/></span><h2>راهنمای ثبت</h2></div><div className="guide-step"><b>۱</b><p><strong>انتخاب دوره</strong><small>شرکت، سال و دوره مورد نظر را انتخاب کنید.</small></p></div><div className="guide-step"><b>۲</b><p><strong>ورود اطلاعات</strong><small>مقادیر را با واحد نمایش‌داده‌شده وارد کنید.</small></p></div><div className="guide-step"><b>۳</b><p><strong>بررسی و ارسال</strong><small>پس از بررسی تغییرات، گزارش را ارسال کنید.</small></p></div></div><div className="comparison-card"><div className="comparison-title"><AlertCircle size={19}/><strong>مقایسه با دوره مشابه سال قبل</strong></div><p>{previous ? `مبنای مقایسه: ${companyName(companies, previous.companyId)}، ${periodLabel(previous)} ${faNumber(String(previous.year))}.` : 'داده‌ای از دوره مشابه سال قبل برای مقایسه وجود ندارد.'}</p><small>{category === 'indicators' ? 'برای شاخص‌های وزارت نفت، تغییر ۳۰٪ یا بیشتر هشدار ایجاد می‌کند. علت تغییر را کنار همان فیلد ثبت کنید.' : 'آستانه هشدار موقت ۲۰٪ است؛ این مقایسه تقریبی است و به‌تنهایی نشانه خطا نیست. مبنای صفر نیز نمایش داده می‌شود.'}</small>{comparisons.map(item => <div className="comparison-warning" key={item.field}>{item.message}</div>)}{serverWarnings.map((item, index) => <div className="comparison-warning" key={`${item.field}-${index}`}>{item.message}</div>)}</div><button className="aside-link" onClick={() => setView('analytics')}>مشاهده تحلیل گزارش‌ها <ChevronLeft size={16}/></button></aside></div>
   </>;
 }
 function FileTextIcon() { return <span className="document-glyph">≡</span>; }
