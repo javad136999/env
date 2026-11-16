@@ -1,12 +1,17 @@
-import "dotenv/config";
 import express from "express";
-import { createRequire } from "node:module";
-import type { Express } from "express";
+import fs from "node:fs";
+import path from "node:path";
+import { configureExpressApp } from "./server/_core/app";
 
-// Keep the Vercel entrypoint compatible with Node ESM resolution while loading
-// the bundled application built into dist/ by the build command.
-const require = createRequire(import.meta.url);
-const bundledApp = require("./dist/vercel-app.cjs").default as Express;
-const app = express();
-app.use(bundledApp);
+const app = configureExpressApp(express());
+const publicDir = [path.resolve(process.cwd(), "public"), path.resolve(process.cwd(), "dist/public")].find(fs.existsSync);
+
+if (publicDir) {
+  app.use(express.static(publicDir, { index: false }));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api/") || path.extname(req.path)) return next();
+    res.sendFile(path.join(publicDir, "index.html"));
+  });
+}
+
 export default app;
