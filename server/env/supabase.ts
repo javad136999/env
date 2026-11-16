@@ -15,6 +15,11 @@ export type AccountRow = {
   role: string | null;
   company_id: string | null;
 };
+export type LocalAccountRow = AccountRow & {
+  username: string | null;
+  password_hash: string | null;
+  must_change_password: boolean | null;
+};
 
 type Table = "env_accounts" | "env_companies" | "env_reports";
 type Method = "GET" | "POST" | "PATCH";
@@ -74,6 +79,20 @@ async function allRows<T>(table: Table, params: Record<string, string>): Promise
 
 export async function findAccount(openId: string): Promise<AccountRow | undefined> {
   const result = rows<AccountRow>(await request<unknown>("env_accounts", query({ select: "open_id,name,email,role,company_id", open_id: `eq.${openId}`, limit: "1" })));
+  return result[0];
+}
+
+export async function findAccountByUsername(username: string): Promise<LocalAccountRow | undefined> {
+  const result = rows<LocalAccountRow>(await request<unknown>("env_accounts", query({ select: "open_id,name,email,role,company_id,username,password_hash,must_change_password", username: `eq.${username}`, limit: "1" })));
+  return result[0];
+}
+
+export async function setAccountPassword(openId: string, passwordHash: string, mustChangePassword = false): Promise<AccountRow> {
+  const result = rows<AccountRow>(await request<unknown>("env_accounts", query({ select: "open_id,name,email,role,company_id", open_id: `eq.${openId}`, limit: "1" }), "PATCH", {
+    password_hash: passwordHash,
+    must_change_password: mustChangePassword,
+  }, "return=representation"));
+  if (result.length !== 1 || result[0].open_id !== openId) throw new EnvError("ACCOUNT_NOT_FOUND", "حساب مورد نظر وجود ندارد.", 404);
   return result[0];
 }
 

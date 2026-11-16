@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { AlertCircle, ArrowLeft, BarChart3, Bell, Building2, Check, ChevronDown, ChevronLeft, CircleHelp, Download, Droplets, FileBarChart2, FileText, LayoutDashboard, Leaf, Menu, PanelRightClose, Recycle, RefreshCw, ShieldCheck, Wind, X } from 'lucide-react';
 import { Analytics, Dashboard, type View } from './enviro/Dashboard';
 import { Archive, Companies } from './enviro/Archive';
@@ -11,6 +11,26 @@ const navReports: { id: View; label: string; icon: typeof Droplets }[] = [
   { id: 'water', label: 'آب و پساب', icon: Droplets }, { id: 'waste', label: 'پسماند', icon: Recycle }, { id: 'air', label: 'هوا و انتشار', icon: Wind }, { id: 'indicators', label: 'شاخص‌های سالیانه', icon: FileBarChart2 },
 ];
 const dateText = new Intl.DateTimeFormat('fa-IR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
+
+function LocalAuthPage({ changePassword, onComplete }: { changePassword?: boolean; onComplete: () => void }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setError(''); setBusy(true);
+    try {
+      const response = await envFetch(changePassword ? '/api/env/auth/change-password' : '/api/env/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changePassword ? { currentPassword, password: newPassword } : { username, password }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error?.message || 'عملیات ورود ناموفق بود.');
+      onComplete();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'ارتباط با سامانه برقرار نشد.'); }
+    finally { setBusy(false); }
+  }
+  return <div className="auth-page" dir="rtl"><div className="auth-orbit auth-orbit-one"/><div className="auth-orbit auth-orbit-two"/><main className="auth-card"><div className="auth-brand"><span><Leaf size={24}/></span><div><strong>زیست‌نگار</strong><small>سامانه محیط زیست پتروشیمی عسلویه</small></div></div>{changePassword ? <><div className="auth-kicker">امنیت حساب</div><h1>تغییر رمز عبور</h1><p className="auth-lead">برای ادامه کار، رمز عبور اولیه خود را تغییر دهید.</p><form onSubmit={submit} className="auth-form"><label>رمز عبور فعلی<input type="password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} autoComplete="current-password" required /></label><label>رمز عبور جدید<input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} minLength={8} autoComplete="new-password" required /></label><button className="auth-submit" disabled={busy}>{busy ? 'در حال ذخیره…' : 'ذخیره رمز جدید'}</button></form></> : <><div className="auth-kicker">گزارش‌گری مسئولانه</div><h1>به محیط کار سبز عسلویه خوش آمدید</h1><p className="auth-lead">این سامانه برای ثبت، پایش و بهبود عملکرد محیط زیست در صنعت پتروشیمی طراحی شده است.</p><form onSubmit={submit} className="auth-form"><label>نام کاربری<input value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" required /></label><label>رمز عبور<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" required /></label><button className="auth-submit" disabled={busy}>{busy ? 'در حال ورود…' : 'ورود به سامانه'}</button></form><div className="auth-note"><Leaf size={16}/> داده‌های دقیق امروز، هوای پاک‌تر برای فردای عسلویه</div>{window.__MANUS_CONFIG__?.oauthPortalUrl && window.__MANUS_CONFIG__?.projectId && <button className="auth-oauth" onClick={() => startLogin()}>ورود با حساب Manus</button>}</>}{error && <div className="auth-error" role="alert">{error}</div>}<p className="auth-footer">سامانه یکپارچه محیط زیست صنعت پتروشیمی</p></main></div>;
+}
 
 function App() {
   const [context, setContext] = useState<EnvContext | null>(null);
@@ -44,6 +64,8 @@ function App() {
   const allCompanies: Company[] = demo ? demoCompanies : Array.isArray(context?.companies) ? context.companies : [];
   const allReports: Report[] = demo ? demoReports : Array.isArray(context?.reports) ? context.reports.filter(report => !!categories[report.category]) : [];
   const companyId = demo ? demoCompany : context?.user?.companyId;
+  const configuredLoggedOut = !loading && !!context?.configured && !context.authenticated;
+  const mustChangePassword = !loading && connected && context?.mustChangePassword === true;
   const companies = useMemo(() => isAdmin ? allCompanies : allCompanies.filter(company => company.id === companyId), [isAdmin, allCompanies, companyId]);
   const reports = useMemo(() => isAdmin ? allReports : allReports.filter(report => !!companyId && report.companyId === companyId), [isAdmin, allReports, companyId]);
   const navigate = (next: View) => { setSelectedReport(undefined); setView(next); setMobileOpen(false); setNoticeOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); };
@@ -70,6 +92,7 @@ function App() {
   async function logout() {
     setExportMessage('');
     try {
+      await envFetch('/api/env/auth/logout', { method: 'POST' });
       const response = await envFetch('/api/trpc/auth.logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ json: null }) });
       if (!response.ok) throw new Error('logout failed');
       try { sessionStorage.removeItem('manus-cookie'); localStorage.removeItem('manus-runtime-user-info'); } catch { /* storage may be unavailable */ }
@@ -79,6 +102,8 @@ function App() {
       setExportMessage('از حساب خارج شدید.');
     } catch { setExportMessage('خروج ناموفق بود؛ نشست شما همچنان فعال است.'); }
   }
+  if (configuredLoggedOut) return <LocalAuthPage onComplete={() => setReload(value => value + 1)} />;
+  if (mustChangePassword) return <LocalAuthPage changePassword onComplete={() => setReload(value => value + 1)} />;
   const statusText = loading ? 'در حال بررسی اتصال' : connected ? 'متصل به سامانه' : 'نمایش نمونه';
   return <div className="app-shell" dir="rtl">
     {mobileOpen && <button className="mobile-backdrop" aria-label="بستن منو" onClick={() => setMobileOpen(false)}/>}

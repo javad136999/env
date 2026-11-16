@@ -17,6 +17,7 @@ export type Company = { id: string; name: string };
 export type EnvContext = {
   authenticated: boolean;
   configured: boolean;
+  mustChangePassword?: boolean;
   user?: { name: string; role: 'admin' | 'company' | 'pending'; companyId?: string };
   companies?: Company[];
   reports?: Report[];
