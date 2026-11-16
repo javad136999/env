@@ -1,5 +1,7 @@
-// Vercel executes this CommonJS entrypoint after the build has produced the bundled app.
-// Using the bundle avoids Node ESM resolution failures for extensionless TypeScript imports.
-const app = require("./dist/vercel-app.cjs");
+// Vercel detects Express apps from the entrypoint import.
+// The actual application is loaded from the bundle produced by pnpm build.
+const express = require("express");
+const bundledApp = require("./dist/vercel-app.cjs");
 
-module.exports = app.default ?? app;
+if (typeof express !== "function") throw new Error("Express failed to load");
+module.exports = bundledApp.default ?? bundledApp;
