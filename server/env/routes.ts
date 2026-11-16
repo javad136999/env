@@ -1,48 +1,19 @@
 import type { Express, Request, Response } from "express";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { parse as parseCookie } from "cookie";
+import { SignJWT, jwtVerify } from "jose";
 import * as db from "../db";
-import { sdk, type SessionPayload } from "../_core/sdk";
+import { sdk, type SupabaseIdentity } from "../_core/sdk";
 import { ENV } from "../_core/env";
 import { EnvError, accessDenied, notConfigured, reportConflict } from "./errors";
 import { assertLegacyValuesUnchanged, parseReport, preserveLegacyValues, reportsCsv, reportWarnings } from "./reports";
 import { findAccount, findAccountByUsername, findCompany, findReport, hasSupabaseConfiguration, insertReport, listAccounts, listCompanies, listReports, saveCompany, setAccountMembership, setAccountPassword, updateReport, type AccountRow } from "./supabase";
 
-const LOCAL_COOKIE = "env_local_session";
-const LOCAL_SESSION_MS = 1000 * 60 * 60 * 12;
-function localCookie(req: Request) { return parseCookie(req.headers.cookie || "")[LOCAL_COOKIE]; }
-async function localIdentity(req: Request): Promise<SessionPayload | null> {
-  const token = localCookie(req);
-  return token ? sdk.verifySession(token) : null;
-}
-function setLocalCookie(res: Response, token: string) {
-  res.setHeader("Set-Cookie", `${LOCAL_COOKIE}=${token}; Max-Age=${LOCAL_SESSION_MS / 1000}; Path=/; HttpOnly; SameSite=None; Secure`);
-}
-function clearLocalCookie(res: Response) {
-  res.setHeader("Set-Cookie", `${LOCAL_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=None; Secure`);
-}
-function hashPassword(password: string): string {
-  const salt = randomBytes(16);
-  const derived = scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 });
-  return `scrypt$16384$8$1$${salt.toString("base64url")}$${derived.toString("base64url")}`;
-}
-function verifyPassword(password: string, encoded: string | null): boolean {
-  if (!encoded) return false;
-  const parts = encoded.split("$");
-  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
-  const [, n, r, p, saltText, hashText] = parts;
-  const salt = Buffer.from(saltText, "base64url");
-  const expected = Buffer.from(hashText, "base64url");
-  if (!salt.length || expected.length !== 64 || n !== "16384" || r !== "8" || p !== "1") return false;
-  const actual = scryptSync(password, salt, expected.length, { N: 16384, r: 8, p: 1 });
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
-
 function sendError(res: Response, error: unknown, extra: Record<string, unknown> = {}) {
   const safe = error instanceof EnvError ? error : new EnvError("INTERNAL_ERROR", "خطای داخلی در پردازش درخواست.", 500);
   res.status(safe.status).json({ ...extra, error: { code: safe.code, message: safe.message } });
 }
-function noSession() { return new EnvError("UNAUTHENTICATED", "برای ادامه با Manus وارد شوید.", 401); }
+function noSession() { return new EnvError("UNAUTHENTICATED", "برای ادامه با ایمیل و رمز عبور وارد حساب Supabase شوید.", 401); }
 function noStore(res: Response) {
   res.set({ "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", Vary: "Cookie, Authorization" });
 }
@@ -50,27 +21,34 @@ function publicUser(user: db.AuthUser) {
   const role = user.role === "admin" ? "admin" as const : user.role === "user" ? "company" as const : "pending" as const;
   return { name: user.name, role, ...(role !== "pending" && user.companyId ? { companyId: user.companyId } : {}) };
 }
-async function identityWithSource(req: Request): Promise<{ session: SessionPayload; local: boolean }> {
-  const local = await localIdentity(req);
-  if (local && !local.openId.startsWith("cron_")) return { session: local, local: true };
-  const session = await sdk.verifyRequestSession(req);
-  if (!session || session.openId.startsWith("cron_")) throw noSession();
-  return { session, local: false };
+const LOCAL_COOKIE = "env_local_session";
+const LOCAL_SESSION_MS = 1000 * 60 * 60 * 12;
+function localKey() { return new TextEncoder().encode(process.env.MANUS_JWT_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || ""); }
+function localCookie(req: Request) { return parseCookie(req.headers.cookie || "")[LOCAL_COOKIE]; }
+async function localIdentity(req: Request): Promise<SupabaseIdentity | null> {
+  const token = localCookie(req);
+  if (!token || !localKey().length) return null;
+  try { const { payload } = await jwtVerify(token, localKey(), { algorithms: ["HS256"] }); const p = payload as Record<string, unknown>; if (typeof p.openId !== "string" || typeof p.name !== "string" || typeof p.email !== "string") return null; return { openId: p.openId, name: p.name, email: p.email || null }; } catch { return null; }
 }
-async function identity(req: Request): Promise<SessionPayload> {
+function setLocalCookie(res: Response, token: string) { res.setHeader("Set-Cookie", `${LOCAL_COOKIE}=${token}; Max-Age=${LOCAL_SESSION_MS / 1000}; Path=/; HttpOnly; SameSite=None; Secure`); }
+function clearLocalCookie(res: Response) { res.setHeader("Set-Cookie", `${LOCAL_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=None; Secure`); }
+function hashPassword(password: string): string { const salt = randomBytes(16); const derived = scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 }); return `scrypt$16384$8$1$${salt.toString("base64url")}$${derived.toString("base64url")}`; }
+function verifyPassword(password: string, encoded: string | null): boolean { if (!encoded) return false; const parts = encoded.split("$"); if (parts.length !== 6 || parts[0] !== "scrypt") return false; const [, n, r, p, saltText, hashText] = parts; const salt = Buffer.from(saltText, "base64url"); const expected = Buffer.from(hashText, "base64url"); if (!salt.length || expected.length !== 64 || n !== "16384" || r !== "8" || p !== "1") return false; const actual = scryptSync(password, salt, expected.length, { N: 16384, r: 8, p: 1 }); return actual.length === expected.length && timingSafeEqual(actual, expected); }
+async function identityWithSource(req: Request): Promise<{ session: SupabaseIdentity; local: boolean }> { const local = await localIdentity(req); if (local && !local.openId.startsWith("cron_")) return { session: local, local: true }; const session = await sdk.verifyRequestSession(req); if (!session || session.openId.startsWith("cron_")) throw noSession(); return { session, local: false }; }
+async function identity(req: Request): Promise<SupabaseIdentity> {
   return (await identityWithSource(req)).session;
 }
-async function account(session: SessionPayload): Promise<db.AuthUser> {
-  const existing = await db.getUserByOpenId(session.openId, session.name);
+async function account(session: SupabaseIdentity): Promise<db.AuthUser> {
+  const existing = await db.getUserByOpenId(session.openId, session.name, session.email);
   if (existing) return existing;
-  // Preview may provide a real, project-bound verified JWT before the OAuth callback.
+  // A verified Supabase Auth identity receives a pending account until an administrator assigns access.
   // Create only an unassigned pending account, never membership or privilege.
-  await db.upsertUser({ openId: session.openId, name: session.name || null });
-  const registered = await db.getUserByOpenId(session.openId, session.name);
+  await db.upsertUser({ openId: session.openId, name: session.name || null, email: session.email });
+  const registered = await db.getUserByOpenId(session.openId, session.name, session.email);
   if (!registered) throw new EnvError("DATABASE_ERROR", "ثبت حساب در پایگاه داده ناموفق بود.", 503);
   return registered;
 }
-async function authorized(session: SessionPayload): Promise<db.AuthUser> {
+async function authorized(session: SupabaseIdentity): Promise<db.AuthUser> {
   const user = await account(session);
   if (user.role === "pending") throw accessDenied();
   return user;
@@ -104,40 +82,30 @@ export function registerEnvRoutes(app: Express) {
     try {
       if (!hasSupabaseConfiguration()) throw notConfigured();
       const body: unknown = req.body;
-      if (!validObject(body) || Object.keys(body).some(key => key !== "username" && key !== "password") || !validText(body.username, 120) || typeof body.password !== "string" || body.password.length < 1 || body.password.length > 256) {
-        throw new EnvError("LOGIN_INVALID", "نام کاربری و رمز عبور معتبر نیستند.", 400);
-      }
+      if (!validObject(body) || Object.keys(body).some(key => key !== "username" && key !== "password") || !validText(body.username, 120) || typeof body.password !== "string" || body.password.length < 1 || body.password.length > 256) throw new EnvError("LOGIN_INVALID", "نام کاربری و رمز عبور معتبر نیستند.", 400);
       const found = await findAccountByUsername(body.username);
       if (!found || !verifyPassword(body.password, found.password_hash)) throw new EnvError("LOGIN_FAILED", "نام کاربری یا رمز عبور نادرست است.", 401);
-      const token = await sdk.signSession({ openId: found.open_id, appId: ENV.appId, name: body.username }, { expiresInMs: LOCAL_SESSION_MS });
+      if (!process.env.MANUS_JWT_SECRET && !process.env.SUPABASE_SERVICE_ROLE_KEY) throw notConfigured();
+      const token = await new SignJWT({ openId: found.open_id, appId: "local", name: body.username, email: found.email ?? "" }).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setExpirationTime(Math.floor((Date.now() + LOCAL_SESSION_MS) / 1000)).sign(localKey());
       setLocalCookie(res, token);
-      const user = await account({ openId: found.open_id, appId: ENV.appId, name: found.name || body.username });
+      const user = await account({ openId: found.open_id, name: found.name || body.username, email: found.email });
       res.json({ user: publicUser(user), mustChangePassword: found.must_change_password === true });
     } catch (error) { sendError(res, error); }
   });
-
-  app.post("/api/env/auth/logout", async (_req, res) => {
-    noStore(res);
-    clearLocalCookie(res);
-    res.json({ ok: true });
-  });
-
+  app.post("/api/env/auth/logout", async (_req, res) => { noStore(res); clearLocalCookie(res); res.json({ ok: true }); });
   app.post("/api/env/auth/change-password", async (req, res) => {
     noStore(res);
     try {
       const source = await identityWithSource(req);
       if (!source.local) throw new EnvError("LOCAL_SESSION_REQUIRED", "برای تغییر رمز باید با حساب محلی وارد شوید.", 401);
       const body: unknown = req.body;
-      if (!validObject(body) || Object.keys(body).some(key => key !== "password" && key !== "currentPassword") || typeof body.password !== "string" || body.password.length < 8 || body.password.length > 256 || typeof body.currentPassword !== "string") {
-        throw new EnvError("PASSWORD_INVALID", "رمز جدید باید حداقل ۸ نویسه باشد.", 400);
-      }
+      if (!validObject(body) || Object.keys(body).some(key => key !== "password" && key !== "currentPassword") || typeof body.password !== "string" || body.password.length < 8 || body.password.length > 256 || typeof body.currentPassword !== "string") throw new EnvError("PASSWORD_INVALID", "رمز جدید باید حداقل ۸ نویسه باشد.", 400);
       const found = await findAccountByUsername(source.session.name);
       if (!found || found.open_id !== source.session.openId || !verifyPassword(body.currentPassword, found.password_hash)) throw new EnvError("PASSWORD_CURRENT_INVALID", "رمز فعلی نادرست است.", 401);
       await setAccountPassword(found.open_id, hashPassword(body.password), false);
       res.json({ user: publicUser(await account(source.session)), mustChangePassword: false });
     } catch (error) { sendError(res, error); }
   });
-
   app.get("/api/env/admin/accounts", async (req, res) => {
     noStore(res);
     try {
@@ -188,13 +156,13 @@ export function registerEnvRoutes(app: Express) {
 
   app.get("/api/env/context", async (req, res) => {
     noStore(res);
-    let session: SessionPayload | null = null;
+    let session: SupabaseIdentity | null = null;
     let local = false;
     try {
       const source = await identityWithSource(req);
       session = source.session;
       local = source.local;
-      if (!session || session.openId.startsWith("cron_")) {
+      if (!session) {
         res.json({ authenticated: false, configured: hasSupabaseConfiguration() });
         return;
       }
@@ -215,7 +183,7 @@ export function registerEnvRoutes(app: Express) {
       }
       res.json({ authenticated: true, configured: true, user: publicUser(user), companies, reports, ...(local ? { mustChangePassword } : {}) });
     } catch (error) {
-      sendError(res, error, { authenticated: !!session && !session.openId.startsWith("cron_"), configured: hasSupabaseConfiguration() });
+      sendError(res, error, { authenticated: !!session, configured: hasSupabaseConfiguration() });
     }
   });
 

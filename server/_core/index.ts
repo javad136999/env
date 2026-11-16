@@ -1,58 +1,17 @@
 import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
-import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import type { ErrorRequestHandler } from "express";
-import { registerOAuthRoutes } from "./oauth";
-import { registerEnvRoutes } from "../env/routes";
-import { publicPlatformScript } from "./publicConfig";
-import { appRouter } from "../routers";
-import { createContext } from "./context";
+import { configureExpressApp } from "./app";
 import { serveStatic, setupVite } from "./vite";
 
 async function startServer() {
-  const app = express();
+  const app = configureExpressApp(express());
   const server = createServer(app);
-  // Bound and sanitize JSON errors for this API without affecting starter endpoints.
-  app.use("/api/env", (req, res, next) => {
-    if (req.method === "POST" && !req.is("application/json")) {
-      res.set({ "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
-      res.status(415).json({ error: { code: "CONTENT_TYPE_INVALID", message: "درخواست باید application/json باشد." } });
-      return;
-    }
-    next();
-  });
-  app.use("/api/env", express.json({ limit: "128kb" }));
-  const envBodyError: ErrorRequestHandler = (error, _req, res, _next) => {
-    const tooLarge = error?.type === "entity.too.large";
-    res.set({ "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
-    res.status(tooLarge ? 413 : 400).json({ error: { code: tooLarge ? "BODY_TOO_LARGE" : "BODY_INVALID", message: "بدنهٔ درخواست معتبر نیست." } });
-  };
-  app.use("/api/env", envBodyError);
-  // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
-  app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
-  app.get("/api/platform/config.js", (_req, res) => {
-    res.set("Cache-Control", "no-store").type("application/javascript").send(publicPlatformScript());
-  });
-  registerOAuthRoutes(app);
-  registerEnvRoutes(app);
-  // tRPC API
-  app.use(
-    "/api/trpc",
-    createExpressMiddleware({
-      router: appRouter,
-      createContext,
-    })
-  );
-  // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
   } else {
     serveStatic(app);
   }
-
   const port = Number(process.env.PORT || "3000");
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid PORT");
   server.on("error", error => { console.error("Server failed:", error.message); process.exit(1); });

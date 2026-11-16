@@ -2,29 +2,10 @@ import { jsxLocPlugin } from '@builder.io/vite-plugin-jsx-loc';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
-import { defineConfig, type Plugin } from 'vite';
-import { publicPlatformScript } from './server/_core/publicConfig';
-
-// This application handles confidential company reports. Do not inject the
-// development browser debug/session recorder, which can record request bodies.
-function vitePluginPublicPlatformConfig(): Plugin {
-  return {
-    name: 'manus-public-platform-config',
-    configureServer(server) {
-      server.middlewares.use('/api/platform/config.js', (_req, res) => {
-        res.setHeader('Content-Type', 'application/javascript');
-        res.setHeader('Cache-Control', 'no-store');
-        res.end(publicPlatformScript());
-      });
-    },
-    generateBundle() {
-      this.emitFile({ type: 'asset', fileName: 'api/platform/config.js', source: publicPlatformScript() });
-    },
-  };
-}
+import { defineConfig } from 'vite';
 
 export default defineConfig({
-  plugins: [vitePluginPublicPlatformConfig(), react(), tailwindcss(), jsxLocPlugin()],
+  plugins: [react(), tailwindcss(), jsxLocPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, 'client', 'src'),
@@ -35,10 +16,10 @@ export default defineConfig({
   envDir: path.resolve(import.meta.dirname),
   root: path.resolve(import.meta.dirname, 'client'),
   publicDir: path.resolve(import.meta.dirname, 'client', 'public'),
-  build: { outDir: path.resolve(import.meta.dirname, 'dist/public'), emptyOutDir: true },
+  build: { outDir: path.resolve(import.meta.dirname, 'public'), emptyOutDir: true },
   server: {
     host: true,
-    allowedHosts: ['.manuspre.computer', '.manus.computer', '.manus-asia.computer', '.manuscomputer.ai', '.manusvm.computer', 'localhost', '127.0.0.1'],
+    allowedHosts: ['localhost', '127.0.0.1'],
     fs: { strict: true, deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/.*', '**/.manus-logs/**'] },
   },
 });
