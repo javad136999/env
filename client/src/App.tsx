@@ -49,7 +49,7 @@ function App() {
   const companies = useMemo(() => isAdmin ? allCompanies : allCompanies.filter(company => company.id === companyId), [isAdmin, allCompanies, companyId]);
   const reports = useMemo(() => isAdmin ? allReports : allReports.filter(report => !!companyId && report.companyId === companyId), [isAdmin, allReports, companyId]);
   const navigate = (next: View) => { setSelectedReport(undefined); setView(next); setMobileOpen(false); setSidebarCollapsed(next === 'water' || next === 'waste' || next === 'air' || next === 'indicators'); setNoticeOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-  const openReport = (report: Report) => { setSelectedReport(report); setView(report.category); setMobileOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const openReport = (report: Report) => { setSelectedReport(report); setView(report.category); setMobileOpen(false); setSidebarCollapsed(report.category === 'water' || report.category === 'waste' || report.category === 'air' || report.category === 'indicators'); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const onSaved = (report: Report) => { setContext(current => current ? { ...current, reports: [...(current.reports ?? []).filter(item => item.id !== report.id), report] } : current); };
   const onCompanyCreated = (company: Company) => { setContext(current => current?.user?.role === 'admin' ? { ...current, companies: [...(current.companies ?? []).filter(item => item.id !== company.id), company] } : current); };
   async function exportReports() {
