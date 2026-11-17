@@ -184,7 +184,7 @@ function sumRowsFor(reports: Report[], year: number, category: Category, section
 function hasRowsFor(reports: Report[], year: number, category: Category, section: string, match: (row: Record<string, unknown>) => boolean) {
   return reports.filter(report => report.status === 'submitted' && report.year === year && report.category === category && report.period !== 0).flatMap(report => rowValues(report, section)).some(match);
 }
-function industryYears(reports: Report[]) { return [...new Set(reports.filter(report => report.status === 'submitted').map(report => report.year))].sort((a, b) => a - b); }
+function industryYears(reports: Report[]) { const latest = Math.max(1400, ...reports.filter(report => report.status === 'submitted').map(report => report.year)); return Array.from({ length: latest - 1400 + 1 }, (_, index) => 1400 + index); }
 function industryData(reports: Report[]): { water: IndustryPoint[]; wastewater: IndustryPoint[]; waste: IndustryPoint[]; flaring: IndustryPoint[]; pollutants: IndustryPoint[]; co2e: IndustryPoint[] } {
   const years = industryYears(reports);
   return {
