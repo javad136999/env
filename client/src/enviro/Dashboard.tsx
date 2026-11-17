@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowDownLeft, ArrowLeft, ArrowUpLeft, BarChart3, Building2, CheckCircle2, ChevronDown, Clock3, Download, Droplets, FileBarChart2, FileCheck2, FileText, MoreHorizontal, Recycle, Wind } from 'lucide-react';
+import { Activity, ArrowDownLeft, ArrowLeft, ArrowUpLeft, BarChart3, Building2, CheckCircle2, ChevronDown, Clock3, Download, Droplets, FileBarChart2, FileCheck2, FileText, MoreHorizontal, Recycle, Wind } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { categories, companyName, faNumber, periodLabel, type Category, type Company, type Report } from './data';
 
@@ -56,6 +56,31 @@ function numericValue(report: Report | undefined, key: string) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value.replace(/,/g, '')))) return Number(value.replace(/,/g, ''));
   return null;
+}
+
+function rowValues(report: Report, section: string): Record<string, unknown>[] {
+  try { const raw = report.values[section]; const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : []; return Array.isArray(parsed) ? parsed.filter((row): row is Record<string, unknown> => !!row && typeof row === 'object' && !Array.isArray(row)) : []; } catch { return []; }
+}
+function numericUnknown(value: unknown): number | null { if (typeof value === 'number' && Number.isFinite(value)) return value; if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value.replace(/,/g, '')))) return Number(value.replace(/,/g, '')); return null; }
+function sumRows(report: Report, section: string, key: string): number | null { const values = rowValues(report, section).map(row => numericUnknown(row[key])).filter((value): value is number => value !== null); return values.length ? values.reduce((sum, value) => sum + value, 0) : null; }
+type EnvironmentalCategory = 'water' | 'waste' | 'air';
+function environmentalMetric(report: Report, category: EnvironmentalCategory): number | null {
+  if (category === 'water') return numericValue(report, 'wastewater_generated') ?? sumRows(report, 'water_effluents', 'volume');
+  if (category === 'waste') return numericValue(report, 'hazardous_waste') !== null || numericValue(report, 'non_hazardous_waste') !== null ? (numericValue(report, 'hazardous_waste') ?? 0) + (numericValue(report, 'non_hazardous_waste') ?? 0) : sumRows(report, 'waste_streams', 'generated');
+  return sumRows(report, 'air_flaring', 'flare_gas') ?? numericValue(report, 'greenhouse_gases');
+}
+const environmentalCategories: { key: EnvironmentalCategory; title: string; subtitle: string; unit: string; color: string; icon: typeof Droplets }[] = [
+  { key: 'water', title: 'آب و پساب', subtitle: 'پساب تولیدی', unit: 'مترمکعب', color: '#3b9b88', icon: Droplets },
+  { key: 'waste', title: 'پسماند', subtitle: 'پسماند تولیدی', unit: 'تن', color: '#d0a044', icon: Recycle },
+  { key: 'air', title: 'هوا و فلرینگ', subtitle: 'گاز ارسالی به فلر', unit: 'واحد ثبت‌شده در گزارش', color: '#7d8fc8', icon: Wind },
+];
+
+function CompanyEnvironmentalDashboard({ reports }: { reports: Report[] }) {
+  const years = [...new Set(reports.filter(report => report.status === 'submitted').map(report => report.year))].sort((a, b) => a - b);
+  const data = years.map(year => Object.fromEntries([['year', year], ['label', faNumber(String(year))], ...environmentalCategories.map(item => [item.key, reports.filter(report => report.status === 'submitted' && report.category === item.key && report.year === year).map(report => environmentalMetric(report, item.key)).filter((value): value is number => value !== null).reduce((sum, value) => sum + value, 0) || null])])) as { year: number; label: string; water: number | null; waste: number | null; air: number | null }[];
+  const latest = data.at(-1);
+  const coverage = years.length ? Math.round(environmentalCategories.filter(item => data.some(point => point[item.key] !== null)).length / environmentalCategories.length * 100) : 0;
+  return <section className="company-environment-panel"><div className="company-environment-heading"><div><div className="eyebrow"><span /> تحلیل عملکرد شرکت <b>/</b> داده‌های ثبت‌شده</div><h2>تصویر محیط‌زیستی شرکت در طول سال‌ها</h2><p>این بخش فقط داده‌های ارسال‌شدهٔ همین شرکت را تحلیل می‌کند و از فرم ثبت گزارش جداست.</p></div><div className="environment-score"><div className="score-ring" style={{ background: `conic-gradient(#4b9a75 0% ${coverage}%, #e6efe8 ${coverage}% 100%)` }}><div>{faNumber(coverage)}٪</div></div><span>پوشش داده</span></div></div>{!data.length ? <div className="environment-empty"><Activity size={22}/><div><strong>هنوز دادهٔ سالانهٔ کافی برای تحلیل وجود ندارد.</strong><span>پس از ارسال گزارش‌های آب، پسماند یا هوا، روند عملکرد این شرکت در این بخش نمایش داده می‌شود.</span></div></div> : <><div className="environment-kpis">{environmentalCategories.map(item => { const Icon = item.icon; const value = latest?.[item.key]; return <div className="environment-kpi" key={item.key} style={{ '--metric-color': item.color } as React.CSSProperties}><span className="environment-kpi-icon"><Icon size={18}/></span><div><small>{item.title}</small><strong>{value === null || value === undefined ? '—' : faNumber(value)}</strong><span>{item.subtitle} · {item.unit}</span></div></div>; })}<div className="environment-kpi neutral-kpi"><span className="environment-kpi-icon"><CheckCircle2 size={18}/></span><div><small>آخرین سال دارای داده</small><strong>{latest?.label ?? '—'}</strong><span>{faNumber(data.length)} سال سابقهٔ قابل تحلیل</span></div></div></div><div className="environment-charts">{environmentalCategories.map(item => { const Icon = item.icon; return <div className="environment-chart-card" key={item.key}><div className="environment-chart-title"><span><Icon size={16} color={item.color}/><strong>{item.title}</strong></span><small>{item.subtitle}</small></div><div className="environment-chart" dir="ltr"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}><defs><linearGradient id={`environment-${item.key}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={item.color} stopOpacity={0.24}/><stop offset="100%" stopColor={item.color} stopOpacity={0.02}/></linearGradient></defs><CartesianGrid stroke="#edf2ee" vertical={false} strokeDasharray="4 6"/><XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#96a69b', fontSize: 9, fontFamily: 'Vazirmatn' }}/><YAxis tickLine={false} axisLine={false} tick={{ fill: '#a2afa7', fontSize: 9, fontFamily: 'Vazirmatn' }}/><Tooltip contentStyle={{ border: '1px solid #e2ebe4', borderRadius: 10, direction: 'rtl', fontFamily: 'Vazirmatn', fontSize: 11 }} formatter={(value: unknown) => [value === null || value === undefined ? 'ثبت نشده' : faNumber(Number(value)), item.unit]}/><Area type="monotone" dataKey={item.key} connectNulls={false} stroke={item.color} strokeWidth={2.5} fill={`url(#environment-${item.key})`} dot={{ r: 3, fill: '#fff', stroke: item.color, strokeWidth: 2 }}/></AreaChart></ResponsiveContainer></div><div className="environment-chart-foot"><span>روند سالانه</span><span>{data.filter(point => point[item.key] !== null).length ? `${faNumber(data.filter(point => point[item.key] !== null).length)} سال داده` : 'بدون مقدار عددی'}</span></div></div>; })}</div></>}</section>;
 }
 
 function SemiannualComparison({ reports, isAdmin }: { reports: Report[]; isAdmin: boolean }) {
@@ -128,6 +153,7 @@ export function Dashboard({ reports, companies, demo, isAdmin, setView, openRepo
   const sorted = [...visibleReports].sort((a, b) => b.year - a.year || b.period - a.period);
   return <>
     <section className="welcome-row"><div><div className="eyebrow"><span /> نمای کلی سامانه <b>/</b> داشبورد</div><h1>داشبورد محیط زیست <span className="title-spark">✳</span></h1><p>تصویری روشن از عملکرد و گزارش‌های محیط زیستی</p></div><div className="welcome-actions"><button className="outline-btn" onClick={() => setView('archive')}><FileText size={17}/> آرشیو گزارش‌ها</button><button className="primary-btn" onClick={() => setView('water')}><span className="plus">＋</span> ثبت گزارش جدید</button></div></section>
+    {!isAdmin && <CompanyEnvironmentalDashboard reports={reports}/>} 
     <div className="section-label"><div><span className="section-dot"/> خلاصه وضعیت <span className="muted-label">{demo ? '· نمایش نمونه' : '· اطلاعات حساب شما'}</span></div><label className="dashboard-year-filter">سال نمایش<select value={selectedYear} onChange={event => setSelectedYear(event.target.value)}><option value="all">همه سال‌ها</option>{years.map(year => <option value={year} key={year}>{faNumber(String(year))}</option>)}</select></label></div>
     <section className="kpi-grid">
       <div className="kpi-card featured"><div className="kpi-head"><span>کل گزارش‌ها</span><span className="kpi-icon"><FileText size={20}/></span></div><div className="kpi-value">{faNumber(reports.length)} <small>گزارش</small></div><div className="featured-bottom"><span><BarChart3 size={14}/> در همه حوزه‌ها</span><span className="white-arrow"><ArrowUpLeft size={15}/></span></div><div className="kpi-rings" /></div>
