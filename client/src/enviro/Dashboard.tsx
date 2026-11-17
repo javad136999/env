@@ -195,7 +195,7 @@ function sumRowsFor(reports: Report[], year: number, category: Category, section
 function hasRowsFor(reports: Report[], year: number, category: Category, section: string, match: (row: Record<string, unknown>) => boolean) {
   return reports.filter(report => report.status === 'submitted' && report.year === year && report.category === category && report.period !== 0).flatMap(report => rowValues(report, section)).some(match);
 }
-function industryYears(reports: Report[]) { const latest = Math.max(1400, ...reports.filter(report => report.status === 'submitted').map(report => report.year)); return Array.from({ length: latest - 1400 + 1 }, (_, index) => 1400 + index); }
+function industryYears(reports: Report[]) { const latest = Math.max(1405, ...reports.filter(report => report.status === 'submitted').map(report => report.year)); return Array.from({ length: latest - 1400 + 1 }, (_, index) => 1400 + index); }
 const officialIndustryTotals: Record<number, Record<string, number | null>> = {
   1403: { underground: 0, surface: 1800419046, network: 97772533, sea: null, cooling: 4106728482, process: 24717830, total: 4368547028, ordinary: 65912981, hazardous: 54691585, flare: 575785, co: null, nox: 37101, so2: 901, thc: 136595, methane: null, co2e: 20290180 },
   1404: { underground: 1350500, surface: 3482384983, network: 76191447, sea: null, cooling: 5782679432, process: 4191096, total: 6132728124, ordinary: 16625182, hazardous: 24554799, flare: 523569, co: null, nox: 5730, so2: 1006, thc: 6420, methane: null, co2e: 16085234 },
