@@ -222,6 +222,40 @@ function industryData(reports: Report[]): IndustryData {
   };
   return applyOfficialIndustryTotals(data);
 }
+function DataQualityAlerts({ reports, companies }: { reports: Report[]; companies: Company[] }) {
+  const fields = categories.indicators.fields.filter(field => field.type !== 'text');
+  const years = Array.from({ length: 6 }, (_, index) => 1400 + index);
+  const submitted = reports.filter(report => report.category === 'indicators' && report.period === 0 && report.status === 'submitted');
+  const missingReports: { company: string; year: number; reason: string }[] = [];
+  const partialReports: { company: string; year: number; reason: string }[] = [];
+  companies.forEach(company => years.forEach(year => {
+    const report = submitted.find(item => item.companyId === company.id && item.year === year);
+    if (!report) missingReports.push({ company: company.name, year, reason: 'گزارش شاخص سالانه ثبت نشده است؛ شیت سالانه بررسی شود.' });
+    else {
+      const missing = fields.filter(field => numericValue(report, field.key) === null);
+      if (missing.length) partialReports.push({ company: company.name, year, reason: `${faNumber(missing.length)} شاخص خالی است: ${missing.slice(0, 4).map(field => field.key).join('، ')}${missing.length > 4 ? ' و موارد دیگر' : ''}` });
+    }
+  }));
+  const aggregateChecks = [1403, 1404].flatMap(year => {
+    const official = officialIndustryTotals[year];
+    const yearReports = submitted.filter(report => report.year === year);
+    return ['underground', 'surface', 'network', 'ordinary', 'hazardous', 'flare', 'nox', 'so2', 'thc', 'co2e'].flatMap(key => {
+      const target = official?.[key];
+      if (target === null || target === undefined) return [];
+      const field = ({ underground: 'E1', surface: 'E2', network: 'E3', ordinary: 'E9', hazardous: 'E8', flare: 'E13', nox: 'E16', so2: 'E15', thc: 'E17', co2e: 'E14' } as Record<string, string>)[key];
+      const current = yearReports.reduce((sum, report) => sum + (numericValue(report, field) ?? 0), 0);
+      const difference = Math.abs(target - current);
+      return difference > Math.max(1, Math.abs(target) * 0.03) ? [{ company: 'مجموع صنعت', year, reason: `${key} با شیت تجمیعی ${faNumber((difference / Math.max(1, Math.abs(target)) * 100).toFixed(1))}٪ اختلاف دارد؛ پوشش شرکت‌ها بررسی شود.` }] : [];
+    });
+  });
+  const alerts = [...missingReports, ...partialReports, ...aggregateChecks];
+  const sourceChecks = [
+    { year: 1403, label: 'تب عسلویه - سال', state: 'تطبیق‌شده با ۳۷ شرکت' },
+    { year: 1404, label: 'تب عسلویه - سال', state: 'تطبیق‌شده با ۳۴ شرکت' },
+  ];
+  return <section className="data-quality-panel"><div className="panel-heading"><div><div className="panel-title"><span className="mini-icon"><AlertCircle size={17}/></span><h2>مرکز هشدار کیفیت داده</h2></div><p>کنترل خودکار گزارش‌های خالی، ناقص و اختلاف با شیت‌های تجمیعی</p></div><span className={alerts.length ? 'quality-badge warning' : 'quality-badge ok'}>{alerts.length ? `${faNumber(alerts.length)} هشدار فعال` : 'بدون هشدار'}</span></div><div className="quality-summary"><div><strong>{faNumber(missingReports.length)}</strong><span>گزارش سالانه خالی</span></div><div><strong>{faNumber(partialReports.length)}</strong><span>گزارش ناقص</span></div><div><strong>{faNumber(aggregateChecks.length)}</strong><span>اختلاف با تجمیع رسمی</span></div><div><strong>{faNumber(fields.length)}</strong><span>شاخص تحت پایش</span></div></div><div className="quality-sources"><strong>وضعیت کنترل شیت‌ها</strong>{sourceChecks.map(item => <span key={item.year}><b>{faNumber(String(item.year))}</b>{item.label} · {item.state}</span>)}</div>{alerts.length ? <div className="quality-alert-list">{alerts.slice(0, 12).map((alert, index) => <div className="quality-alert" key={`${alert.company}-${alert.year}-${index}`}><AlertCircle size={15}/><div><strong>{alert.company} · سال {faNumber(String(alert.year))}</strong><span>{alert.reason}</span></div></div>)}{alerts.length > 12 && <small className="quality-more">{faNumber(alerts.length - 12)} هشدار دیگر در همین بررسی شناسایی شد.</small>}</div> : <div className="quality-clear"><CheckCircle2 size={16}/> همه گزارش‌های شرکت‌ها و مجموع‌های رسمی در محدودهٔ کنترل قرار دارند.</div>}</section>;
+}
+
 function IndustryChart({ title, subtitle, data, bars, height = 235 }: { title: string; subtitle: string; data: IndustryPoint[]; bars: { key: string; name: string; color: string }[]; height?: number }) {
   const hasValue = data.some(point => bars.some(bar => typeof point[bar.key] === 'number' && point[bar.key] !== 0));
   return <div className="industry-chart-card"><div className="industry-chart-heading"><div><h3>{title}</h3><p>{subtitle}</p></div><BarChart3 size={18}/></div>{!hasValue ? <div className="comparison-empty">برای این شاخص در گزارش‌های ارسال‌شده دادهٔ عددی وجود ندارد.</div> : <><div className="industry-chart" dir="ltr" style={{ height }}><ResponsiveContainer width="100%" height="100%"><BarChart data={data} margin={{ top: 12, right: 10, left: -16, bottom: 0 }}><CartesianGrid stroke="#edf2ee" vertical={false} strokeDasharray="4 6"/><XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: '#879c8e', fontSize: 10, fontFamily: 'Vazirmatn' }}/><YAxis tickLine={false} axisLine={false} tick={{ fill: '#9aaba0', fontSize: 10, fontFamily: 'Vazirmatn' }}/><Tooltip contentStyle={{ border: '1px solid #e2ebe4', borderRadius: 10, direction: 'rtl', fontFamily: 'Vazirmatn', fontSize: 11 }} formatter={(value: unknown, name: string) => [value === null || value === undefined ? 'ثبت نشده' : faNumber(Number(value)), name]}/><Legend verticalAlign="top" align="right" iconType="circle"/><>{bars.map(bar => <Bar key={bar.key} dataKey={bar.key} name={bar.name} fill={bar.color} radius={[4, 4, 0, 0]} maxBarSize={26}/>)}</></BarChart></ResponsiveContainer></div><div className="industry-chart-note">منبع: شیت تجمیعی رسمی کل کشور برای ۱۴۰۳ و ۱۴۰۴ یا گزارش‌های ارسال‌شدهٔ شرکت‌ها برای سال‌های دیگر. مقدار ساختگی در این نمودار استفاده نمی‌شود.</div></>}</div>;
@@ -256,6 +290,7 @@ export function Dashboard({ reports, companies, demo, isAdmin, setView, openRepo
       <div className="kpi-card"><div className="kpi-head"><span>{isAdmin ? 'شرکت‌ها' : 'پوشش ثبت گزارش'}</span><span className="kpi-icon pale-blue">{isAdmin ? <Building2 size={19}/> : <FileBarChart2 size={19}/>}</span></div><div className="kpi-value">{faNumber(isAdmin ? companies.length : coverage)} <small>{isAdmin ? 'شرکت' : '٪'}</small></div><div className="kpi-foot"><span className="soft-badge blue">{isAdmin ? 'در دسترس' : 'پوشش تقریبی'}</span><span>{isAdmin ? 'در نمای فعلی' : `${faNumber(expectedPerYear)} گزارش هدف در سال`}</span></div></div>
     </section>
     {isAdmin && <IndustryOverview reports={reports}/>}
+    {isAdmin && <DataQualityAlerts reports={reports} companies={companies}/>}
     {isAdmin && <section className="dashboard-grid"><div className="panel trend-panel"><div className="panel-heading"><div><div className="panel-title"><span className="mini-icon"><BarChart3 size={17}/></span><h2>روند گزارش‌دهی</h2></div><p>تعداد گزارش‌ها به تفکیک حوزه و دوره</p></div><button className="small-select" onClick={() => setView('analytics')}>مشاهده تحلیل <ChevronDown size={14}/></button></div><div className="chart-legend"><span><i className="legend-water"/>آب و پساب</span><span><i className="legend-waste"/>پسماند</span><span><i className="legend-air"/>هوا</span></div><ReportsChart reports={visibleReports}/></div>
       <div className="panel overview-panel"><div className="panel-heading"><div><div className="panel-title"><span className="mini-icon"><CheckCircle2 size={17}/></span><h2>وضعیت گزارش‌ها</h2></div><p>نگاهی به گزارش‌های موجود</p></div><MoreHorizontal size={20} color="#a4b1aa"/></div><div className="donut-wrap"><div className="donut" style={{ background: `conic-gradient(#4a9a75 0% ${ratio}%, #e9f0eb ${ratio}% 100%)` }}><div><strong>{reports.length ? `${faNumber(ratio)}٪` : '—'}</strong><span>{reports.length ? 'ارسال شده' : 'داده‌ای نیست'}</span></div></div></div><div className="donut-stats"><div><i className="dot-green"/><span>ارسال شده</span><b>{faNumber(submitted)}</b></div><div><i className="dot-light"/><span>پیش‌نویس</span><b>{faNumber(drafts)}</b></div></div></div></section>}
     {isAdmin && <><SemiannualComparison reports={visibleReports} isAdmin={isAdmin}/><HistoricalTrend reports={visibleReports} isAdmin={isAdmin}/></>}
