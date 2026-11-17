@@ -31,3 +31,5 @@
 @media(max-width:600px){.data-toolbar{align-items:stretch}.data-toolbar-title{width:100%;margin:0}.data-search{min-width:0;flex:1}.database-field-row{grid-template-columns:1fr 1.2fr;gap:8px}.field-status{grid-column:1/-1;justify-content:flex-start;width:max-content;padding:4px 8px;margin-top:0}.database-field-details{grid-column:1/-1}.database-field-value .input-unit input{font-size:10px}}
 
 .carry-forward-note{display:inline-flex;align-items:center;margin-top:7px;padding:4px 7px;border-radius:5px;background:#eef7f0;color:#679477;font-size:8px}.carry-forward-chip{margin-right:auto;margin-left:8px;border-radius:5px;padding:4px 7px;background:#edf7ef;color:#5d976e;font-size:8px;font-weight:600}
+
+.form-grid label .formula-badge{display:inline-flex;margin-right:6px;padding:2px 5px;border-radius:4px;background:#eef4fb;color:#6f8ea9;font-size:7px;font-weight:500}.detail-row input[readonly]{background:#f4f8f5;color:#4f8062;border-color:#dcebe0;cursor:default}

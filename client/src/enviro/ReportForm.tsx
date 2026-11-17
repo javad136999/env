@@ -115,9 +115,37 @@ function readRows(report: Report | undefined, category: Category): Record<string
       const raw = report?.values[section.key];
       const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : [];
       const rows = Array.isArray(parsed) ? parsed.filter(row => row && typeof row === 'object' && !Array.isArray(row)).map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, String(value ?? '')]))) : [];
-      return [section.key, rows];
+      if (rows.length || category !== 'waste' || section.key !== 'waste_streams') return [section.key, rows];
+      const legacy = report?.values.legacy_source;
+      if (typeof legacy !== 'string') return [section.key, rows];
+      const source: unknown = JSON.parse(legacy);
+      const cells = source && typeof source === 'object' && !Array.isArray(source) && Array.isArray((source as { numeric_cells?: unknown }).numeric_cells) ? (source as { numeric_cells: unknown[] }).numeric_cells : [];
+      const imported = cells.map(item => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return {};
+        const record = item as { text?: Record<string, unknown>; numbers?: Record<string, unknown> };
+        const text = record.text ?? {}; const numbers = record.numbers ?? {};
+        const result: InputRow = {};
+        const textMap: Record<string, string> = { '1': 'production_unit', '3': 'form_code', '4': 'hazard_code', '5': 'waste_name' };
+        const numberMap: Record<string, string> = { '3': 'product_amount', '6': 'opening_balance', '7': 'incoming', '8': 'generated', '9': 'period_total', '10': 'reuse', '11': 'sale', '12': 'incineration', '13': 'landfill', '14': 'external_recycling', '19': 'management_total', '20': 'closing_balance' };
+        Object.entries(textMap).forEach(([key, field]) => { if (typeof text[key] === 'string' && text[key].trim()) result[field] = text[key].trim(); });
+        Object.entries(numberMap).forEach(([key, field]) => { if (typeof numbers[key] === 'number' && Number.isFinite(numbers[key]) && numbers[key] >= 0) result[field] = String(numbers[key]); });
+        return result;
+      }).filter(row => row.waste_name || row.form_code || row.hazard_code || Object.keys(row).some(key => ['opening_balance', 'incoming', 'generated', 'period_total', 'closing_balance'].includes(key)));
+      return [section.key, imported];
     } catch { return [section.key, []]; }
   }));
+}
+
+const wasteFormulaFields = new Set(['period_total', 'management_total', 'closing_balance']);
+const rowNumber = (row: InputRow, key: string) => nonNegativeNumber(row[key]) ?? 0;
+export function applyWasteFormulas(rows: InputRow[]): InputRow[] {
+  return rows.map(row => {
+    const next = { ...row };
+    if (!(next.period_total ?? '').trim() && ['opening_balance', 'incoming', 'generated'].some(key => (next[key] ?? '').trim())) next.period_total = String(rowNumber(next, 'opening_balance') + rowNumber(next, 'incoming') + rowNumber(next, 'generated'));
+    if (!(next.management_total ?? '').trim() && ['reuse', 'sale', 'incineration', 'landfill', 'external_recycling'].some(key => (next[key] ?? '').trim())) next.management_total = String(['reuse', 'sale', 'incineration', 'landfill', 'external_recycling'].reduce((sum, key) => sum + rowNumber(next, key), 0));
+    if (!(next.closing_balance ?? '').trim() && (next.period_total ?? '').trim()) next.closing_balance = String(Math.max(0, rowNumber(next, 'period_total') - rowNumber(next, 'management_total')));
+    return next;
+  });
 }
 
 function wasteRowIdentity(row: InputRow): string {
@@ -169,6 +197,7 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
   const filledFieldCount = definition.fields.filter(field => (effectiveValues[field.key] ?? '').trim()).length;
   const legacySource = typeof initialReport?.values.legacy_source === 'string' ? initialReport.values.legacy_source : undefined;
   const priorWaste = useMemo(() => category === 'waste' ? previousWasteReport(reports, companyId, year, period, initialReport?.id) : undefined, [category, reports, companyId, year, period, initialReport?.id]);
+  const effectiveRows = useMemo(() => category === 'waste' ? { ...rows, waste_streams: applyWasteFormulas(rows.waste_streams ?? []) } : rows, [category, rows]);
   const previous = useMemo(() => comparableReport(reports, companyId, category, year, period, initialReport?.id), [reports, companyId, category, year, period, initialReport?.id]);
   const comparisons = definition.fields.flatMap<Warning>(field => {
     if (field.type === 'text') return [];
@@ -198,7 +227,7 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
     }
     for (const section of rowSections[category]) {
       const resultRows: Record<string, string | number>[] = [];
-      for (const row of rows[section.key] ?? []) {
+      for (const row of effectiveRows[section.key] ?? []) {
         const outputRow: Record<string, string | number> = {};
         for (const field of section.fields) {
           const raw = (row[field.key] ?? '').trim();
@@ -257,7 +286,7 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
           </div></div>;
         })}</div>
         {legacySource && <div className="legacy-data-notice"><Info size={17}/><div><strong>این رکورد از دادهٔ واردشدهٔ قدیمی تشکیل شده است.</strong><p>منبع اصلی گزارش در سامانه حفظ شده و قابل مشاهده است؛ فیلدهای استاندارد قابل تکمیل یا اصلاح هستند.</p></div></div>}
-        {rowSections[category].map(section => <div className="row-section" key={section.key}><div className="row-section-heading"><div><h3>{section.title}</h3><p>{section.description}</p>{category === 'waste' && <span className="carry-forward-note">{priorWaste ? `موجودی اول دوره از ${periodLabel(priorWaste)} ${faNumber(String(priorWaste.year))} پیشنهاد می‌شود.` : 'برای این دوره گزارش پسماند قبلیِ قابل انتقال پیدا نشد.'}</span>}</div><button className="add-row" onClick={() => setRows(current => { const existing = current[section.key] ?? []; const nextRow: InputRow = category === 'waste' && section.key === 'waste_streams' ? { opening_balance: carryForwardWasteOpening(priorWaste, {}, existing.length) } : {}; return { ...current, [section.key]: [...existing, nextRow] }; })}><Plus size={15}/> افزودن ردیف</button></div>{(rows[section.key] ?? []).length === 0 ? <div className="row-empty">هنوز ردیفی اضافه نشده است.</div> : (rows[section.key] ?? []).map((row, index) => <div className="detail-row" key={index}><div className="detail-row-top"><strong>ردیف {faNumber(index + 1)}</strong>{category === 'waste' && row.opening_balance && <span className="carry-forward-chip">موجودی منتقل‌شده</span>}<button aria-label={`حذف ردیف ${faNumber(index + 1)} از ${section.title}`} onClick={() => setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).filter((_, rowIndex) => rowIndex !== index) }))}><Trash2 size={15}/> حذف</button></div><div className="form-grid detail-grid">{section.fields.map(field => <label key={field.key}>{field.label}<div className="input-unit"><input aria-label={`${field.label}، ردیف ${index + 1}، ${section.title}`} type="text" inputMode={field.type === 'text' ? 'text' : 'decimal'} value={row[field.key] ?? ''} onChange={event => { const nextValue = event.target.value; setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).map((item, rowIndex) => rowIndex === index ? { ...item, [field.key]: nextValue } : item) })); }} placeholder={field.placeholder || 'وارد کنید'} />{field.unit && <span dir="auto">{field.unit}</span>}</div></label>)}</div></div>)}</div>)}
+        {rowSections[category].map(section => <div className="row-section" key={section.key}><div className="row-section-heading"><div><h3>{section.title}</h3><p>{section.description}</p>{category === 'waste' && <span className="carry-forward-note">{priorWaste ? `موجودی اول دوره از ${periodLabel(priorWaste)} ${faNumber(String(priorWaste.year))} پیشنهاد می‌شود.` : 'برای این دوره گزارش پسماند قبلیِ قابل انتقال پیدا نشد.'} فرمول‌های مجموع و مانده پایان نیز خودکار محاسبه می‌شوند.</span>}</div><button className="add-row" onClick={() => setRows(current => { const existing = current[section.key] ?? []; const nextRow: InputRow = category === 'waste' && section.key === 'waste_streams' ? { opening_balance: carryForwardWasteOpening(priorWaste, {}, existing.length) } : {}; return { ...current, [section.key]: [...existing, nextRow] }; })}><Plus size={15}/> افزودن ردیف</button></div>{(effectiveRows[section.key] ?? []).length === 0 ? <div className="row-empty">هنوز ردیفی اضافه نشده است.</div> : (effectiveRows[section.key] ?? []).map((row, index) => <div className="detail-row" key={index}><div className="detail-row-top"><strong>ردیف {faNumber(index + 1)}</strong>{category === 'waste' && row.opening_balance && <span className="carry-forward-chip">موجودی منتقل‌شده</span>}<button aria-label={`حذف ردیف ${faNumber(index + 1)} از ${section.title}`} onClick={() => setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).filter((_, rowIndex) => rowIndex !== index) }))}><Trash2 size={15}/> حذف</button></div><div className="form-grid detail-grid">{section.fields.map(field => <label key={field.key}>{field.label}{category === 'waste' && wasteFormulaFields.has(field.key) && <small className="formula-badge">فرمول ثابت</small>}<div className="input-unit"><input aria-label={`${field.label}، ردیف ${index + 1}، ${section.title}`} type="text" readOnly={category === 'waste' && wasteFormulaFields.has(field.key)} inputMode={field.type === 'text' ? 'text' : 'decimal'} value={row[field.key] ?? ''} onChange={event => { if (category === 'waste' && wasteFormulaFields.has(field.key)) return; const nextValue = event.target.value; setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).map((item, rowIndex) => rowIndex === index ? { ...item, [field.key]: nextValue } : item) })); }} placeholder={field.placeholder || 'وارد کنید'} />{field.unit && <span dir="auto">{field.unit}</span>}</div></label>)}</div></div>)}</div>)}
         <div className="form-footer"><span><Info size={15}/> فیلد خالی به معنی داده ناموجود است، نه صفر.</span><div><button className="outline-btn" disabled={saving} onClick={() => submit('draft')}><Save size={16}/> ذخیره پیش‌نویس</button><button className="primary-btn" disabled={saving} onClick={() => submit('submitted')}><Send size={16}/> {saving ? 'در حال ارسال...' : 'ارسال گزارش'}</button></div></div>{message && <div role="alert" className={`form-message ${message.kind}`}>{message.kind === 'error' ? <AlertCircle size={18}/> : <CheckCircle2 size={18}/>}<span>{message.text}</span></div>}</section></div>
       <aside className="form-aside"><div className="panel guidance"><div className="panel-title"><span className="mini-icon"><Info size={17}/></span><h2>راهنمای ثبت</h2></div><div className="guide-step"><b>۱</b><p><strong>انتخاب دوره</strong><small>شرکت، سال و دوره مورد نظر را انتخاب کنید.</small></p></div><div className="guide-step"><b>۲</b><p><strong>ورود اطلاعات</strong><small>مقادیر را با واحد نمایش‌داده‌شده وارد کنید.</small></p></div><div className="guide-step"><b>۳</b><p><strong>بررسی و ارسال</strong><small>پس از بررسی تغییرات، گزارش را ارسال کنید.</small></p></div></div><div className="comparison-card"><div className="comparison-title"><AlertCircle size={19}/><strong>مقایسه با دوره مشابه سال قبل</strong></div><p>{previous ? `مبنای مقایسه: ${companyName(companies, previous.companyId)}، ${periodLabel(previous)} ${faNumber(String(previous.year))}.` : 'داده‌ای از دوره مشابه سال قبل برای مقایسه وجود ندارد.'}</p><small>{category === 'indicators' ? 'برای شاخص‌های وزارت نفت، تغییر ۳۰٪ یا بیشتر هشدار ایجاد می‌کند. علت تغییر را کنار همان فیلد ثبت کنید.' : 'آستانه هشدار موقت ۲۰٪ است؛ این مقایسه تقریبی است و به‌تنهایی نشانه خطا نیست. مبنای صفر نیز نمایش داده می‌شود.'}</small>{comparisons.map(item => <div className="comparison-warning" key={item.field}>{item.message}</div>)}{serverWarnings.map((item, index) => <div className="comparison-warning" key={`${item.field}-${index}`}>{item.message}</div>)}</div><button className="aside-link" onClick={() => setView('analytics')}>مشاهده تحلیل گزارش‌ها <ChevronLeft size={16}/></button></aside></div>
   </>;
