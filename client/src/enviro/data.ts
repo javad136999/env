@@ -92,10 +92,10 @@ export const rowSections: Record<Category, RowSection[]> = {
     ] },
   ],
   waste: [
-    { key: 'waste_streams', title: 'ردیف‌های پسماند', description: 'مقادیر جرمی پسماند در نمونه مرجع بر حسب تن هستند. هر نوع پسماند و واحد تولیدی را جداگانه ثبت کنید.', fields: [
-      { key: 'production_unit', label: 'واحد تولیدی', type: 'text' }, { key: 'product_amount', label: 'مقدار محصول' }, { key: 'product_unit', label: 'واحد محصول', type: 'text' },
+    { key: 'waste_streams', title: 'ردیف‌های پسماند', description: 'هر شرکت می‌تواند ردیف‌های متفاوت داشته باشد. «مانده اول دوره» از «موجودی پایان» دوره قبل همان ردیف پیشنهاد می‌شود و قابل اصلاح است.', fields: [
+      { key: 'opening_balance', label: 'مانده اول دوره', unit: 'تن' }, { key: 'production_unit', label: 'واحد تولیدی', type: 'text' }, { key: 'product_amount', label: 'مقدار محصول' }, { key: 'product_unit', label: 'واحد محصول', type: 'text' },
       { key: 'form_code', label: 'کد فرم', type: 'text' }, { key: 'hazard_code', label: 'کد خطر', type: 'text' }, { key: 'waste_name', label: 'نام پسماند', type: 'text' },
-      { key: 'opening_balance', label: 'مانده قبل', unit: 'تن' }, { key: 'incoming', label: 'ورودی', unit: 'تن' }, { key: 'generated', label: 'تولید دوره', unit: 'تن' },
+      { key: 'incoming', label: 'ورودی', unit: 'تن' }, { key: 'generated', label: 'تولید دوره', unit: 'تن' },
       { key: 'period_total', label: 'مجموع دوره', unit: 'تن' }, { key: 'reuse', label: 'استفاده مجدد', unit: 'تن' }, { key: 'sale', label: 'فروش', unit: 'تن' },
       { key: 'incineration', label: 'سوزاندن', unit: 'تن' }, { key: 'landfill', label: 'دفن', unit: 'تن' }, { key: 'external_recycling', label: 'بازیافت / انتقال خارج', unit: 'تن' },
       { key: 'management_total', label: 'مجموع مدیریت', unit: 'تن' }, { key: 'closing_balance', label: 'موجودی پایان', unit: 'تن' },

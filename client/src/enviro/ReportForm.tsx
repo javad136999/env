@@ -120,6 +120,26 @@ function readRows(report: Report | undefined, category: Category): Record<string
   }));
 }
 
+function wasteRowIdentity(row: InputRow): string {
+  return ['form_code', 'hazard_code', 'waste_name', 'production_unit'].map(key => (row[key] ?? '').trim().toLocaleLowerCase()).filter(Boolean).join('|');
+}
+
+export function previousWasteReport(reports: Report[], companyId: string, year: string, period: 1 | 2, currentId?: string): Report | undefined {
+  if (!companyId || !validYear(year)) return undefined;
+  const previousYear = period === 1 ? Number(year) - 1 : Number(year);
+  const previousPeriod = period === 1 ? 2 : 1;
+  return reports.find(report => report.id !== currentId && report.companyId === companyId && report.category === 'waste' && report.year === previousYear && report.period === previousPeriod && report.status === 'submitted');
+}
+
+export function carryForwardWasteOpening(previous: Report | undefined, row: InputRow, rowIndex: number): string {
+  if (!previous) return '';
+  const priorRows = readRows(previous, 'waste').waste_streams ?? [];
+  const identity = wasteRowIdentity(row);
+  const matched = identity ? priorRows.find(item => wasteRowIdentity(item) === identity) : undefined;
+  const source = matched ?? priorRows[rowIndex];
+  return source?.closing_balance ?? '';
+}
+
 export function ReportForm({ category, companies, reports, initialReport, canSave, demo, setView, onSaved }: Props) {
   const definition = categories[category];
   const Icon = definition.icon;
@@ -148,6 +168,7 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
   });
   const filledFieldCount = definition.fields.filter(field => (effectiveValues[field.key] ?? '').trim()).length;
   const legacySource = typeof initialReport?.values.legacy_source === 'string' ? initialReport.values.legacy_source : undefined;
+  const priorWaste = useMemo(() => category === 'waste' ? previousWasteReport(reports, companyId, year, period, initialReport?.id) : undefined, [category, reports, companyId, year, period, initialReport?.id]);
   const previous = useMemo(() => comparableReport(reports, companyId, category, year, period, initialReport?.id), [reports, companyId, category, year, period, initialReport?.id]);
   const comparisons = definition.fields.flatMap<Warning>(field => {
     if (field.type === 'text') return [];
@@ -236,7 +257,7 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
           </div></div>;
         })}</div>
         {legacySource && <div className="legacy-data-notice"><Info size={17}/><div><strong>این رکورد از دادهٔ واردشدهٔ قدیمی تشکیل شده است.</strong><p>منبع اصلی گزارش در سامانه حفظ شده و قابل مشاهده است؛ فیلدهای استاندارد قابل تکمیل یا اصلاح هستند.</p></div></div>}
-        {rowSections[category].map(section => <div className="row-section" key={section.key}><div className="row-section-heading"><div><h3>{section.title}</h3><p>{section.description}</p></div><button className="add-row" onClick={() => setRows(current => ({ ...current, [section.key]: [...(current[section.key] ?? []), {}] }))}><Plus size={15}/> افزودن ردیف</button></div>{(rows[section.key] ?? []).length === 0 ? <div className="row-empty">هنوز ردیفی اضافه نشده است.</div> : (rows[section.key] ?? []).map((row, index) => <div className="detail-row" key={index}><div className="detail-row-top"><strong>ردیف {faNumber(index + 1)}</strong><button aria-label={`حذف ردیف ${faNumber(index + 1)} از ${section.title}`} onClick={() => setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).filter((_, rowIndex) => rowIndex !== index) }))}><Trash2 size={15}/> حذف</button></div><div className="form-grid detail-grid">{section.fields.map(field => <label key={field.key}>{field.label}<div className="input-unit"><input aria-label={`${field.label}، ردیف ${index + 1}، ${section.title}`} type="text" inputMode={field.type === 'text' ? 'text' : 'decimal'} value={row[field.key] ?? ''} onChange={event => { const nextValue = event.target.value; setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).map((item, rowIndex) => rowIndex === index ? { ...item, [field.key]: nextValue } : item) })); }} placeholder={field.placeholder || 'وارد کنید'} />{field.unit && <span dir="auto">{field.unit}</span>}</div></label>)}</div></div>)}</div>)}
+        {rowSections[category].map(section => <div className="row-section" key={section.key}><div className="row-section-heading"><div><h3>{section.title}</h3><p>{section.description}</p>{category === 'waste' && <span className="carry-forward-note">{priorWaste ? `موجودی اول دوره از ${periodLabel(priorWaste)} ${faNumber(String(priorWaste.year))} پیشنهاد می‌شود.` : 'برای این دوره گزارش پسماند قبلیِ قابل انتقال پیدا نشد.'}</span>}</div><button className="add-row" onClick={() => setRows(current => { const existing = current[section.key] ?? []; const nextRow: InputRow = category === 'waste' && section.key === 'waste_streams' ? { opening_balance: carryForwardWasteOpening(priorWaste, {}, existing.length) } : {}; return { ...current, [section.key]: [...existing, nextRow] }; })}><Plus size={15}/> افزودن ردیف</button></div>{(rows[section.key] ?? []).length === 0 ? <div className="row-empty">هنوز ردیفی اضافه نشده است.</div> : (rows[section.key] ?? []).map((row, index) => <div className="detail-row" key={index}><div className="detail-row-top"><strong>ردیف {faNumber(index + 1)}</strong>{category === 'waste' && row.opening_balance && <span className="carry-forward-chip">موجودی منتقل‌شده</span>}<button aria-label={`حذف ردیف ${faNumber(index + 1)} از ${section.title}`} onClick={() => setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).filter((_, rowIndex) => rowIndex !== index) }))}><Trash2 size={15}/> حذف</button></div><div className="form-grid detail-grid">{section.fields.map(field => <label key={field.key}>{field.label}<div className="input-unit"><input aria-label={`${field.label}، ردیف ${index + 1}، ${section.title}`} type="text" inputMode={field.type === 'text' ? 'text' : 'decimal'} value={row[field.key] ?? ''} onChange={event => { const nextValue = event.target.value; setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).map((item, rowIndex) => rowIndex === index ? { ...item, [field.key]: nextValue } : item) })); }} placeholder={field.placeholder || 'وارد کنید'} />{field.unit && <span dir="auto">{field.unit}</span>}</div></label>)}</div></div>)}</div>)}
         <div className="form-footer"><span><Info size={15}/> فیلد خالی به معنی داده ناموجود است، نه صفر.</span><div><button className="outline-btn" disabled={saving} onClick={() => submit('draft')}><Save size={16}/> ذخیره پیش‌نویس</button><button className="primary-btn" disabled={saving} onClick={() => submit('submitted')}><Send size={16}/> {saving ? 'در حال ارسال...' : 'ارسال گزارش'}</button></div></div>{message && <div role="alert" className={`form-message ${message.kind}`}>{message.kind === 'error' ? <AlertCircle size={18}/> : <CheckCircle2 size={18}/>}<span>{message.text}</span></div>}</section></div>
       <aside className="form-aside"><div className="panel guidance"><div className="panel-title"><span className="mini-icon"><Info size={17}/></span><h2>راهنمای ثبت</h2></div><div className="guide-step"><b>۱</b><p><strong>انتخاب دوره</strong><small>شرکت، سال و دوره مورد نظر را انتخاب کنید.</small></p></div><div className="guide-step"><b>۲</b><p><strong>ورود اطلاعات</strong><small>مقادیر را با واحد نمایش‌داده‌شده وارد کنید.</small></p></div><div className="guide-step"><b>۳</b><p><strong>بررسی و ارسال</strong><small>پس از بررسی تغییرات، گزارش را ارسال کنید.</small></p></div></div><div className="comparison-card"><div className="comparison-title"><AlertCircle size={19}/><strong>مقایسه با دوره مشابه سال قبل</strong></div><p>{previous ? `مبنای مقایسه: ${companyName(companies, previous.companyId)}، ${periodLabel(previous)} ${faNumber(String(previous.year))}.` : 'داده‌ای از دوره مشابه سال قبل برای مقایسه وجود ندارد.'}</p><small>{category === 'indicators' ? 'برای شاخص‌های وزارت نفت، تغییر ۳۰٪ یا بیشتر هشدار ایجاد می‌کند. علت تغییر را کنار همان فیلد ثبت کنید.' : 'آستانه هشدار موقت ۲۰٪ است؛ این مقایسه تقریبی است و به‌تنهایی نشانه خطا نیست. مبنای صفر نیز نمایش داده می‌شود.'}</small>{comparisons.map(item => <div className="comparison-warning" key={item.field}>{item.message}</div>)}{serverWarnings.map((item, index) => <div className="comparison-warning" key={`${item.field}-${index}`}>{item.message}</div>)}</div><button className="aside-link" onClick={() => setView('analytics')}>مشاهده تحلیل گزارش‌ها <ChevronLeft size={16}/></button></aside></div>
   </>;
