@@ -108,6 +108,21 @@ function indicatorValueForYear(reports: Report[], year: number, fieldKey: string
   return null;
 }
 
+const adminIndicatorDefinitions = [
+  ['E1', 'E1'], ['E2', 'E2'], ['E3', 'E3'], ['E4', 'E4'], ['E5', 'E5'], ['E6', 'E6'], ['E7', 'E7_volume'], ['E8', 'E8'], ['E9', 'E9'], ['E10', 'E10'], ['E11', 'E11'], ['E12', 'E12_amount'], ['E13', 'E13'], ['E14', 'E14'], ['E15', 'E15'], ['E16', 'E16'], ['E17', 'E17'], ['E18', 'E18_area'], ['E19', 'E19'], ['E20', 'E20'],
+] as const;
+function AdminIndicatorCharts({ reports }: { reports: Report[] }) {
+  const years = Array.from({ length: 6 }, (_, index) => 1400 + index);
+  const fields = categories.indicators.fields;
+  const colors = ['#3c9a73', '#6c9cc7', '#8b78bd', '#d07b63', '#d0a044'];
+  const charts = adminIndicatorDefinitions.map(([code, key], index) => {
+    const field = fields.find(item => item.key === key || item.key.startsWith(`${code}_`));
+    const data = years.map(year => ({ year, label: faNumber(String(year)), value: reports.filter(report => report.category === 'indicators' && report.status === 'submitted' && report.period === 0 && report.year === year).map(report => numericValue(report, key)).filter((value): value is number => value !== null).reduce((sum, value) => sum + value, 0) || null }));
+    return <IndustryChart key={code} title={`شاخص ${code}`} subtitle={`${field?.label?.replace(/^E\d+[_ ]?/, '') ?? code} · ${field?.unit ?? 'واحد گزارش'}`} data={data} bars={[{ key: 'value', name: code, color: colors[index % colors.length] }]}/>;
+  });
+  return <section className="admin-indicators-section"><div className="industry-overview-head"><div><div className="eyebrow"><span/> شاخص‌های وزارت نفت <b>/</b> نمای تجمیعی مدیریت</div><h2>روند مستقل هر شاخص از E1 تا E20</h2><p>هر نمودار مجموع داده‌های واقعی شرکت‌های دارای گزارش سالانه را به تفکیک سال نشان می‌دهد.</p></div><span className="quality-badge ok">۲۰ نمودار مستقل</span></div><div className="industry-chart-grid">{charts}</div></section>;
+}
+
 function CompanyEnvironmentalDashboard({ reports }: { reports: Report[] }) {
   const indicatorReports = reports.filter(report => report.category === 'indicators' && report.period === 0 && report.status === 'submitted');
   const yearsWithAnyReport = reports.filter(report => report.status === 'submitted').map(report => report.year);
@@ -295,6 +310,7 @@ export function Dashboard({ reports, companies, demo, isAdmin, setView, openRepo
       <div className="kpi-card"><div className="kpi-head"><span>{isAdmin ? 'شرکت‌ها' : 'پوشش ثبت گزارش'}</span><span className="kpi-icon pale-blue">{isAdmin ? <Building2 size={19}/> : <FileBarChart2 size={19}/>}</span></div><div className="kpi-value">{faNumber(isAdmin ? companies.length : coverage)} <small>{isAdmin ? 'شرکت' : '٪'}</small></div><div className="kpi-foot"><span className="soft-badge blue">{isAdmin ? 'در دسترس' : 'پوشش تقریبی'}</span><span>{isAdmin ? 'در نمای فعلی' : `${faNumber(expectedPerYear)} گزارش هدف در سال`}</span></div></div>
     </section>
     {isAdmin && <IndustryOverview reports={reports}/>}
+    {isAdmin && <AdminIndicatorCharts reports={reports}/>}
     {isAdmin && <DataQualityAlerts reports={reports} companies={companies}/>}
     {isAdmin && <section className="dashboard-grid"><div className="panel trend-panel"><div className="panel-heading"><div><div className="panel-title"><span className="mini-icon"><BarChart3 size={17}/></span><h2>روند گزارش‌دهی</h2></div><p>تعداد گزارش‌ها به تفکیک حوزه و دوره</p></div><button className="small-select" onClick={() => setView('analytics')}>مشاهده تحلیل <ChevronDown size={14}/></button></div><div className="chart-legend"><span><i className="legend-water"/>آب و پساب</span><span><i className="legend-waste"/>پسماند</span><span><i className="legend-air"/>هوا</span></div><ReportsChart reports={visibleReports}/></div>
       <div className="panel overview-panel"><div className="panel-heading"><div><div className="panel-title"><span className="mini-icon"><CheckCircle2 size={17}/></span><h2>وضعیت گزارش‌ها</h2></div><p>نگاهی به گزارش‌های موجود</p></div><MoreHorizontal size={20} color="#a4b1aa"/></div><div className="donut-wrap"><div className="donut" style={{ background: `conic-gradient(#4a9a75 0% ${ratio}%, #e9f0eb ${ratio}% 100%)` }}><div><strong>{reports.length ? `${faNumber(ratio)}٪` : '—'}</strong><span>{reports.length ? 'ارسال شده' : 'داده‌ای نیست'}</span></div></div></div><div className="donut-stats"><div><i className="dot-green"/><span>ارسال شده</span><b>{faNumber(submitted)}</b></div><div><i className="dot-light"/><span>پیش‌نویس</span><b>{faNumber(drafts)}</b></div></div></div></section>}
