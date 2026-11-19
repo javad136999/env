@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, Info, Plus, Save, Search, Send, Trash2 } from 'lucide-react';
-import { categories, companyName, faNumber, periodLabel, referenceLabel, rowSections, type Category, type Company, type Report, type ReportStatus, type Warning } from './data';
+import { categories, companyName, faNumber, periodLabel, referenceLabel, rowSections, wasteTemplates, type Category, type Company, type Report, type ReportStatus, type Warning } from './data';
 import type { View } from './Dashboard';
 import { envFetch } from './api';
 
@@ -167,6 +167,50 @@ export function carryForwardWasteOpening(previous: Report | undefined, row: Inpu
   const source = matched ?? priorRows[rowIndex];
   return source?.closing_balance ?? '';
 }
+function buildFixedWasteRows(current: Report | undefined, previous: Report | undefined): InputRow[] {
+  const currentRows = readRows(current, 'waste').waste_streams ?? [];
+  const previousRows = readRows(previous, 'waste').waste_streams ?? [];
+  const byCode = new Map(currentRows.map(row => [row.form_code || row.waste_name || '', row]));
+  const priorByCode = new Map(previousRows.map(row => [row.form_code || row.waste_name || '', row]));
+  const fixed = wasteTemplates.map(template => {
+    const old = byCode.get(template.formCode) ?? byCode.get(template.wasteName) ?? {};
+    const prior = priorByCode.get(template.formCode) ?? priorByCode.get(template.wasteName);
+    return { form_code: template.formCode, hazard_code: template.hazardCode, waste_name: template.wasteName, ...old, opening_balance: old.opening_balance?.trim() ? old.opening_balance : (prior?.closing_balance ?? '') };
+  });
+  const codes = new Set(wasteTemplates.map(template => template.formCode));
+  return [...fixed, ...currentRows.filter(row => !!row.form_code && !codes.has(row.form_code))];
+}
+function buildFixedFlaringRows(current: Report | undefined, period: 1 | 2): InputRow[] {
+  const months = period === 1 ? ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور'] : ['مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+  const oldRows = readRows(current, 'air').air_flaring ?? [];
+  return months.map(month => ({ month, ...(oldRows.find(row => row.month === month) ?? {}) }));
+}
+const fixedEnvironmentalRows: Record<string, InputRow[]> = {
+  water_sources: [
+    { source: 'آب زیرزمینی', water_type: 'آب خام' }, { source: 'آب سطحی', water_type: 'آب خام' },
+    { source: 'آب شبکه / خریداری‌شده', water_type: 'آب تازه' }, { source: 'آب بازچرخانی‌شده', water_type: 'آب بازیافتی' },
+  ],
+  water_effluents: [
+    { stream_type: 'پساب فرآیندی' }, { stream_type: 'پساب بهداشتی' }, { stream_type: 'بلودان و خنک‌کننده' }, { stream_type: 'رواناب و سایر پساب‌ها' },
+  ],
+  air_flare_composition: [
+    { name: 'متان', formula: 'CH₄' }, { name: 'اتان', formula: 'C₂H₆' }, { name: 'پروپان', formula: 'C₃H₈' }, { name: 'هیدروژن', formula: 'H₂' }, { name: 'سایر ترکیبات' },
+  ],
+  air_feed_products: [{ name: 'خوراک ورودی' }, { name: 'محصول اصلی' }, { name: 'محصول جانبی' }, { name: 'گاز ارسالی به فلر' }],
+  air_combustion: [{ production_unit: 'واحدهای فرآیندی' }, { production_unit: 'بویلرها و کوره‌ها' }, { production_unit: 'مشعل و فلر' }],
+};
+function buildFixedRows(category: Category, current: Report | undefined, previous: Report | undefined, period: 1 | 2): Record<string, InputRow[]> {
+  const result: Record<string, InputRow[]> = {};
+  if (category === 'waste') result.waste_streams = buildFixedWasteRows(current, previous);
+  if (category === 'air') result.air_flaring = buildFixedFlaringRows(current, period);
+  for (const section of rowSections[category]) {
+    if (result[section.key] || !fixedEnvironmentalRows[section.key]) continue;
+    const oldRows = readRows(current, category)[section.key] ?? [];
+    const templates = fixedEnvironmentalRows[section.key];
+    result[section.key] = templates.map((template, index) => ({ ...template, ...(oldRows[index] ?? {}) }));
+  }
+  return result;
+}
 
 export function ReportForm({ category, companies, reports, initialReport, canSave, demo, setView, onSaved }: Props) {
   const definition = categories[category];
@@ -197,6 +241,10 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
   const filledFieldCount = definition.fields.filter(field => (effectiveValues[field.key] ?? '').trim()).length;
   const legacySource = typeof initialReport?.values.legacy_source === 'string' ? initialReport.values.legacy_source : undefined;
   const priorWaste = useMemo(() => category === 'waste' ? previousWasteReport(reports, companyId, year, period, initialReport?.id) : undefined, [category, reports, companyId, year, period, initialReport?.id]);
+  useEffect(() => {
+    const current = initialReport && initialReport.companyId === companyId && initialReport.year === Number(year) && initialReport.period === period ? initialReport : undefined;
+    if (category === 'water' || category === 'waste' || category === 'air') setRows(existing => ({ ...existing, ...buildFixedRows(category, current, priorWaste, period) }));
+  }, [category, companyId, year, period, initialReport?.id, priorWaste?.id]);
   const effectiveRows = useMemo(() => category === 'waste' ? { ...rows, waste_streams: applyWasteFormulas(rows.waste_streams ?? []) } : rows, [category, rows]);
   const previous = useMemo(() => comparableReport(reports, companyId, category, year, period, initialReport?.id), [reports, companyId, category, year, period, initialReport?.id]);
   const comparisons = definition.fields.flatMap<Warning>(field => {
@@ -286,7 +334,7 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
           </div></div>;
         })}</div>
         {legacySource && <div className="legacy-data-notice"><Info size={17}/><div><strong>این رکورد از دادهٔ واردشدهٔ قدیمی تشکیل شده است.</strong><p>منبع اصلی گزارش در سامانه حفظ شده و قابل مشاهده است؛ فیلدهای استاندارد قابل تکمیل یا اصلاح هستند.</p></div></div>}
-        {rowSections[category].map(section => <div className={`row-section ${category !== 'indicators' ? 'sheet-row-section' : ''}`} key={section.key}><div className="row-section-heading"><div><h3>{section.title}</h3><p>{section.description}</p>{category === 'waste' && <span className="carry-forward-note">{priorWaste ? `موجودی اول دوره از ${periodLabel(priorWaste)} ${faNumber(String(priorWaste.year))} پیشنهاد می‌شود.` : 'برای این دوره گزارش پسماند قبلیِ قابل انتقال پیدا نشد.'} فرمول‌های مجموع و مانده پایان نیز خودکار محاسبه می‌شوند.</span>}</div><button className="add-row" onClick={() => setRows(current => { const existing = current[section.key] ?? []; const nextRow: InputRow = category === 'waste' && section.key === 'waste_streams' ? { opening_balance: carryForwardWasteOpening(priorWaste, {}, existing.length) } : {}; return { ...current, [section.key]: [...existing, nextRow] }; })}><Plus size={15}/> افزودن ردیف</button></div>{(effectiveRows[section.key] ?? []).length === 0 ? <div className="row-empty">هنوز ردیفی اضافه نشده است.</div> : (effectiveRows[section.key] ?? []).map((row, index) => <div className={`detail-row ${category !== 'indicators' ? 'sheet-detail-row' : ''}`} key={index}><div className="detail-row-top"><strong>ردیف {faNumber(index + 1)}</strong>{category === 'waste' && row.opening_balance && <span className="carry-forward-chip">موجودی منتقل‌شده</span>}<button aria-label={`حذف ردیف ${faNumber(index + 1)} از ${section.title}`} onClick={() => setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).filter((_, rowIndex) => rowIndex !== index) }))}><Trash2 size={15}/> حذف</button></div><div className="form-grid detail-grid">{section.fields.map(field => <label key={field.key}>{field.label}{category === 'waste' && wasteFormulaFields.has(field.key) && <small className="formula-badge">فرمول ثابت</small>}<div className="input-unit"><input aria-label={`${field.label}، ردیف ${index + 1}، ${section.title}`} type="text" readOnly={category === 'waste' && wasteFormulaFields.has(field.key)} inputMode={field.type === 'text' ? 'text' : 'decimal'} value={row[field.key] ?? ''} onChange={event => { if (category === 'waste' && wasteFormulaFields.has(field.key)) return; const nextValue = event.target.value; setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).map((item, rowIndex) => rowIndex === index ? { ...item, [field.key]: nextValue } : item) })); }} placeholder={field.placeholder || 'وارد کنید'} />{field.unit && <span dir="auto">{field.unit}</span>}</div></label>)}</div></div>)}</div>)}
+        {rowSections[category].map(section => <div className={`row-section ${category !== 'indicators' ? 'sheet-row-section' : ''}`} key={section.key}><div className="row-section-heading"><div><h3>{section.title}</h3><p>{section.description}</p>{category === 'waste' && <span className="carry-forward-note">{priorWaste ? `موجودی اول دوره از ${periodLabel(priorWaste)} ${faNumber(String(priorWaste.year))} پیشنهاد می‌شود.` : 'برای این دوره گزارش پسماند قبلیِ قابل انتقال پیدا نشد.'} همه کدهای پسماند ثابت هستند و فرمول‌های مجموع و مانده پایان نیز خودکار محاسبه می‌شوند.</span>}{category === 'air' && section.key === 'air_flaring' && <span className="carry-forward-note">شش ماه دوره ثابت است؛ تناژ فلرینگ را به تفکیک ماه وارد کنید.</span>}</div>{!((category === 'waste' && section.key === 'waste_streams') || (category === 'air' && section.key === 'air_flaring')) && <button className="add-row" onClick={() => setRows(current => { const existing = current[section.key] ?? []; const nextRow: InputRow = category === 'waste' && section.key === 'waste_streams' ? { opening_balance: carryForwardWasteOpening(priorWaste, {}, existing.length) } : {}; return { ...current, [section.key]: [...existing, nextRow] }; })}><Plus size={15}/> افزودن ردیف</button>}</div>{(effectiveRows[section.key] ?? []).length === 0 ? <div className="row-empty">هنوز ردیفی اضافه نشده است.</div> : (effectiveRows[section.key] ?? []).map((row, index) => <div className={`detail-row ${category !== 'indicators' ? 'sheet-detail-row' : ''}`} key={index}><div className="detail-row-top"><strong>{category === 'air' && section.key === 'air_flaring' ? row.month : `ردیف ${faNumber(index + 1)}`}</strong>{category === 'waste' && row.opening_balance && <span className="carry-forward-chip">موجودی منتقل‌شده</span>}{!((category === 'waste' && section.key === 'waste_streams') || (category === 'air' && section.key === 'air_flaring')) && <button aria-label={`حذف ردیف ${faNumber(index + 1)} از ${section.title}`} onClick={() => setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).filter((_, rowIndex) => rowIndex !== index) }))}><Trash2 size={15}/> حذف</button>}</div><div className="form-grid detail-grid">{section.fields.map(field => <label key={field.key}>{field.label}{category === 'waste' && wasteFormulaFields.has(field.key) && <small className="formula-badge">فرمول ثابت</small>}<div className="input-unit"><input aria-label={`${field.label}، ردیف ${index + 1}، ${section.title}`} type="text" readOnly={category === 'waste' && wasteFormulaFields.has(field.key)} inputMode={field.type === 'text' ? 'text' : 'decimal'} value={row[field.key] ?? ''} onChange={event => { if (category === 'waste' && wasteFormulaFields.has(field.key)) return; const nextValue = event.target.value; setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).map((item, rowIndex) => rowIndex === index ? { ...item, [field.key]: nextValue } : item) })); }} placeholder={field.placeholder || 'وارد کنید'} />{field.unit && <span dir="auto">{field.unit}</span>}</div></label>)}</div></div>)}</div>)}
         <div className="form-footer"><span><Info size={15}/> فیلد خالی به معنی داده ناموجود است، نه صفر.</span><div><button className="outline-btn" disabled={saving} onClick={() => submit('draft')}><Save size={16}/> ذخیره پیش‌نویس</button><button className="primary-btn" disabled={saving} onClick={() => submit('submitted')}><Send size={16}/> {saving ? 'در حال ارسال...' : 'ارسال گزارش'}</button></div></div>{message && <div role="alert" className={`form-message ${message.kind}`}>{message.kind === 'error' ? <AlertCircle size={18}/> : <CheckCircle2 size={18}/>}<span>{message.text}</span></div>}</section></div>
       <aside className="form-aside"><div className="panel guidance"><div className="panel-title"><span className="mini-icon"><Info size={17}/></span><h2>راهنمای ثبت</h2></div><div className="guide-step"><b>۱</b><p><strong>انتخاب دوره</strong><small>شرکت، سال و دوره مورد نظر را انتخاب کنید.</small></p></div><div className="guide-step"><b>۲</b><p><strong>ورود اطلاعات</strong><small>مقادیر را با واحد نمایش‌داده‌شده وارد کنید.</small></p></div><div className="guide-step"><b>۳</b><p><strong>بررسی و ارسال</strong><small>پس از بررسی تغییرات، گزارش را ارسال کنید.</small></p></div></div><div className="comparison-card"><div className="comparison-title"><AlertCircle size={19}/><strong>مقایسه با دوره مشابه سال قبل</strong></div><p>{previous ? `مبنای مقایسه: ${companyName(companies, previous.companyId)}، ${periodLabel(previous)} ${faNumber(String(previous.year))}.` : 'داده‌ای از دوره مشابه سال قبل برای مقایسه وجود ندارد.'}</p><small>{category === 'indicators' ? 'برای شاخص‌های وزارت نفت، تغییر ۳۰٪ یا بیشتر هشدار ایجاد می‌کند. علت تغییر را کنار همان فیلد ثبت کنید.' : 'آستانه هشدار موقت ۲۰٪ است؛ این مقایسه تقریبی است و به‌تنهایی نشانه خطا نیست. مبنای صفر نیز نمایش داده می‌شود.'}</small>{comparisons.map(item => <div className="comparison-warning" key={item.field}>{item.message}</div>)}{serverWarnings.map((item, index) => <div className="comparison-warning" key={`${item.field}-${index}`}>{item.message}</div>)}</div><button className="aside-link" onClick={() => setView('analytics')}>مشاهده تحلیل گزارش‌ها <ChevronLeft size={16}/></button></aside></div>
   </>;
