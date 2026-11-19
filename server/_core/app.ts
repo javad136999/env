@@ -7,7 +7,8 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 export function configureExpressApp(app: Express): Express {
   // Bound and sanitize JSON errors for this API without affecting starter endpoints.
   app.use("/api/env", (req, res, next) => {
-    if (req.method === "POST" && !req.is("application/json")) {
+    const isLogout = req.method === "POST" && req.path === "/auth/logout";
+    if (req.method === "POST" && !isLogout && !req.is("application/json")) {
       res.set({ "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
       res.status(415).json({ error: { code: "CONTENT_TYPE_INVALID", message: "درخواست باید application/json باشد." } });
       return;

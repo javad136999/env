@@ -132,31 +132,32 @@ export const rowSections: Record<Category, RowSection[]> = {
     ] },
   ],
   waste: [
-    { key: 'waste_streams', title: 'ردیف‌های پسماند', description: 'مقادیر جرمی پسماند در نمونه مرجع بر حسب تن هستند. هر نوع پسماند و واحد تولیدی را جداگانه ثبت کنید.', fields: [
-      { key: 'production_unit', label: 'واحد تولیدی', type: 'text' }, { key: 'product_amount', label: 'مقدار محصول' }, { key: 'product_unit', label: 'واحد محصول', type: 'text' },
+    { key: 'waste_streams', title: 'ردیف‌های پسماند', description: 'هر شرکت می‌تواند ردیف‌های متفاوت داشته باشد. «مانده اول دوره» از «موجودی پایان» دوره قبل همان ردیف پیشنهاد می‌شود و قابل اصلاح است.', fields: [
+      { key: 'opening_balance', label: 'مانده اول دوره', unit: 'تن' }, { key: 'production_unit', label: 'واحد تولیدی', type: 'text' }, { key: 'product_amount', label: 'مقدار محصول' }, { key: 'product_unit', label: 'واحد محصول', type: 'text' },
       { key: 'form_code', label: 'کد فرم', type: 'text' }, { key: 'hazard_code', label: 'کد خطر', type: 'text' }, { key: 'waste_name', label: 'نام پسماند', type: 'text' },
-      { key: 'opening_balance', label: 'مانده قبل', unit: 'تن' }, { key: 'incoming', label: 'ورودی', unit: 'تن' }, { key: 'generated', label: 'تولید دوره', unit: 'تن' },
+      { key: 'incoming', label: 'ورودی', unit: 'تن' }, { key: 'generated', label: 'تولید دوره', unit: 'تن' },
       { key: 'period_total', label: 'مجموع دوره', unit: 'تن' }, { key: 'reuse', label: 'استفاده مجدد', unit: 'تن' }, { key: 'sale', label: 'فروش', unit: 'تن' },
       { key: 'incineration', label: 'سوزاندن', unit: 'تن' }, { key: 'landfill', label: 'دفن', unit: 'تن' }, { key: 'external_recycling', label: 'بازیافت / انتقال خارج', unit: 'تن' },
       { key: 'management_total', label: 'مجموع مدیریت', unit: 'تن' }, { key: 'closing_balance', label: 'موجودی پایان', unit: 'تن' },
     ] },
   ],
   air: [
-    { key: 'air_flaring', title: 'فلرینگ و آلاینده‌ها', description: 'برای هر ماه دوره، مقدار گاز ارسالی و آلاینده‌های اندازه‌گیری‌شده را با ذکر واحد ثبت کنید.', fields: [
-      { key: 'month', label: 'ماه', type: 'text' }, { key: 'flare_gas', label: 'گاز ارسالی به فلر' }, { key: 'flare_unit', label: 'واحد گاز فلر', type: 'text' },
-      { key: 'co', label: 'CO' }, { key: 'nox', label: 'NOx' }, { key: 'co2', label: 'CO2' }, { key: 'so2', label: 'SO2' }, { key: 'thc', label: 'THC' }, { key: 'methane', label: 'متان' },
-      { key: 'pollutant_units', label: 'واحدهای آلاینده‌ها', type: 'text', placeholder: 'برای هر پارامتر ذکر کنید' },
+    { key: 'air_flaring', title: 'تناژ فلرینگ برحسب ماه', description: 'مقدار گاز ارسالی به فلر و آلاینده‌های ثبت‌شده را برای هر ماه دوره وارد کنید.', fields: [
+      { key: 'month', label: 'ماه', type: 'text' }, { key: 'flare_gas', label: 'تناژ / مقدار گاز ارسالی به فلر' }, { key: 'flare_unit', label: 'واحد گاز فلر', type: 'text' },
+      { key: 'co', label: 'CO' }, { key: 'nox', label: 'NOx' }, { key: 'co2', label: 'CO₂' }, { key: 'so2', label: 'SO₂' }, { key: 'thc', label: 'THC / VOC' }, { key: 'methane', label: 'متان' },
+      { key: 'pollutant_units', label: 'واحد آلاینده‌ها', type: 'text', placeholder: 'واحد هر آلاینده را ذکر کنید' },
     ] },
-    { key: 'air_combustion', title: 'منابع احتراقی', description: 'مشخصات هر نوع منبع احتراقی، سوخت و آلاینده‌های دودکش را جدا وارد کنید.', fields: [
-      { key: 'production_unit', label: 'واحد', type: 'text' }, { key: 'source_type', label: 'نوع منبع', type: 'text' }, { key: 'source_count', label: 'تعداد منبع', unit: 'عدد' },
-      { key: 'fuel_type', label: 'نوع سوخت', type: 'text' }, { key: 'fuel_amount', label: 'مقدار سوخت' }, { key: 'fuel_unit', label: 'واحد سوخت', type: 'text' },
-      { key: 'stack_pollutants', label: 'آلاینده‌های دودکش و واحد آنها', type: 'text' },
-    ] },
-    { key: 'air_flare_composition', title: 'ترکیب گاز فلر', description: 'درصد ترکیب‌ها را با مشخص کردن مبنای مولی یا جرمی وارد کنید.', fields: [
+    { key: 'air_flare_composition', title: 'ترکیب درصد فلرینگ', description: 'ترکیب گاز فلر را به تفکیک ماده، فرمول و مبنای درصد ثبت کنید.', fields: [
       { key: 'name', label: 'نام ترکیب', type: 'text' }, { key: 'formula', label: 'فرمول ترکیب', type: 'text' }, { key: 'basis', label: 'مبنای مولی / جرمی', type: 'text' }, { key: 'percentage', label: 'درصد ترکیب', unit: '٪' },
     ] },
-    { key: 'air_feed_products', title: 'خوراک و محصولات', description: 'خوراک و محصولات مرتبط با گزارش هوا را با واحد مستقل وارد کنید.', fields: [
+    { key: 'air_feed_products', title: 'خوراک و محصول', description: 'خوراک و محصولات مرتبط با گزارش هوا و فلرینگ را با مقدار و واحد مستقل وارد کنید.', fields: [
       { key: 'name', label: 'نام خوراک / محصول', type: 'text' }, { key: 'amount', label: 'مقدار دوره' }, { key: 'unit', label: 'واحد', type: 'text' },
+    ] },
+    { key: 'air_combustion', title: 'محاسبات فلرینگ', description: 'پارامترهای محاسبه فلرینگ، منابع احتراقی و ضرایب انتشار را طبق شیت محاسبات ثبت کنید.', fields: [
+      { key: 'production_unit', label: 'واحد / منبع محاسبه', type: 'text' }, { key: 'source_type', label: 'نوع منبع احتراقی', type: 'text' }, { key: 'source_count', label: 'تعداد منبع', unit: 'عدد' },
+      { key: 'fuel_type', label: 'نوع سوخت / گاز فلر', type: 'text' }, { key: 'fuel_amount', label: 'مقدار سوخت یا گاز ورودی' }, { key: 'fuel_unit', label: 'واحد ورودی', type: 'text' },
+      { key: 'calculation_method', label: 'روش / فرمول محاسبه', type: 'text' }, { key: 'emission_factor', label: 'ضریب انتشار' }, { key: 'factor_unit', label: 'واحد ضریب', type: 'text' },
+      { key: 'calculated_amount', label: 'مقدار محاسبه‌شده' }, { key: 'calculated_unit', label: 'واحد خروجی', type: 'text' }, { key: 'stack_pollutants', label: 'آلاینده‌های محاسبه‌شده و واحد آن‌ها', type: 'text' },
     ] },
   ],
   indicators: [],

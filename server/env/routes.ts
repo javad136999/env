@@ -205,7 +205,11 @@ export function registerEnvRoutes(app: Express) {
         mustChangePassword = localAccount?.open_id === session.openId && localAccount.must_change_password === true;
       }
       res.json({ authenticated: true, configured: true, user: publicUser(user), companies, reports, ...(local ? { mustChangePassword } : {}) });
-    } catch (error) {
+  } catch (error) {
+      if (error instanceof EnvError && error.code === "UNAUTHENTICATED") {
+        res.json({ authenticated: false, configured: hasSupabaseConfiguration() });
+        return;
+      }
       sendError(res, error, { authenticated: !!session, configured: hasSupabaseConfiguration() });
     }
   });
