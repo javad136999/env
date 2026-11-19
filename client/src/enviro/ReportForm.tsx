@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ArrowLeft, CheckCircle2, ChevronLeft, Info, Plus, Save, Send, Trash2 } from 'lucide-react';
-import { categories, companyName, faNumber, periodLabel, referenceLabel, rowSections, type Category, type Company, type Report, type ReportStatus, type Warning } from './data';
+import { categories, companyName, faNumber, periodLabel, referenceLabel, rowSections, wasteTemplates, type Category, type Company, type Report, type ReportStatus, type RowSection, type Warning } from './data';
 import type { View } from './Dashboard';
 import { envFetch } from './api';
 
@@ -120,6 +120,45 @@ function readRows(report: Report | undefined, category: Category): Record<string
   }));
 }
 
+type WasteRow = InputRow & { form_code?: string; hazard_code?: string; waste_name?: string };
+function rowNumber(row: InputRow, key: string): number | null {
+  const value = nonNegativeNumber(row[key]);
+  return value === null ? null : value;
+}
+function calculatedWasteValues(row: InputRow): Record<string, string> {
+  const totalInputs = ['opening_balance', 'incoming', 'generated'].map(key => rowNumber(row, key));
+  const managementInputs = ['reuse', 'sale', 'incineration', 'landfill', 'external_recycling'].map(key => rowNumber(row, key));
+  const total = totalInputs.some(value => value !== null) ? totalInputs.reduce<number>((sum, value) => sum + (value ?? 0), 0) : null;
+  const management = managementInputs.some(value => value !== null) ? managementInputs.reduce<number>((sum, value) => sum + (value ?? 0), 0) : null;
+  const closing = total === null && management === null ? null : (total ?? 0) - (management ?? 0);
+  return { period_total: total === null ? '' : String(total), management_total: management === null ? '' : String(management), closing_balance: closing === null ? '' : String(closing) };
+}
+function previousWasteReport(reports: Report[], companyId: string, year: string, period: 1 | 2, initialReportId?: string): Report | undefined {
+  if (!validYear(year) || !companyId) return undefined;
+  const currentYear = Number(year); const exactYear = period === 2 ? currentYear : currentYear - 1; const exactPeriod = period === 2 ? 1 : 2;
+  const candidates = reports.filter(report => report.id !== initialReportId && report.companyId === companyId && report.category === 'waste' && report.status === 'submitted');
+  return candidates.find(report => report.year === exactYear && report.period === exactPeriod)
+    ?? candidates.filter(report => report.year < currentYear || (report.year === currentYear && report.period < period)).sort((a, b) => b.year - a.year || b.period - a.period)[0];
+}
+function buildWasteRows(current: Report | undefined, previous: Report | undefined): WasteRow[] {
+  const currentRows = readRows(current, 'waste').waste_streams as WasteRow[];
+  const previousRows = readRows(previous, 'waste').waste_streams as WasteRow[];
+  const byCode = new Map(currentRows.map(row => [row.form_code || row.waste_name || '', row]));
+  const previousByCode = new Map(previousRows.map(row => [row.form_code || row.waste_name || '', row]));
+  const fixed = wasteTemplates.map(template => {
+    const old = byCode.get(template.formCode) ?? byCode.get(template.wasteName) ?? {};
+    const prior = previousByCode.get(template.formCode) ?? previousByCode.get(template.wasteName);
+    return { form_code: template.formCode, hazard_code: template.hazardCode, waste_name: template.wasteName, ...old, opening_balance: old.opening_balance?.trim() ? old.opening_balance : (prior?.closing_balance ?? '') };
+  });
+  const fixedCodes = new Set(wasteTemplates.map(item => item.formCode));
+  return [...fixed, ...currentRows.filter(row => !!row.form_code && !fixedCodes.has(row.form_code))];
+}
+function buildAirFlaringRows(current: Report | undefined, period: 1 | 2): InputRow[] {
+  const months = period === 1 ? ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور'] : ['مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+  const oldRows = readRows(current, 'air').air_flaring ?? [];
+  return months.map(month => ({ month, ...(oldRows.find(row => row.month === month) ?? {}) }));
+}
+
 export function ReportForm({ category, companies, reports, initialReport, canSave, demo, setView, onSaved }: Props) {
   const definition = categories[category];
   const Icon = definition.icon;
@@ -140,6 +179,25 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
   const suggestions = useMemo<Record<string, AutoSuggestion>>(() => category === 'indicators' ? { ...indicatorAutofill(reports, companyId, year), E20: e20Autofill(values) } : {}, [category, reports, companyId, year, values]);
   const effectiveValues = applyAutofill(values, suggestions, suppressed);
   const previous = useMemo(() => comparableReport(reports, companyId, category, year, period, initialReport?.id), [reports, companyId, category, year, period, initialReport?.id]);
+  const wastePrevious = useMemo(() => previousWasteReport(reports, companyId, year, period, initialReport?.id), [reports, companyId, year, period, initialReport?.id]);
+  const wasteScopeRef = useRef('');
+  const airScopeRef = useRef('');
+  useEffect(() => {
+    if (category !== 'waste') return;
+    const scope = `${companyId}:${year}:${period}:${initialReport?.id ?? 'new'}`;
+    if (wasteScopeRef.current === scope) return;
+    wasteScopeRef.current = scope;
+    const current = initialReport && initialReport.companyId === companyId && initialReport.year === Number(year) && initialReport.period === period ? initialReport : undefined;
+    setRows(existing => ({ ...existing, waste_streams: buildWasteRows(current, wastePrevious) }));
+  }, [category, companyId, year, period, initialReport, wastePrevious]);
+  useEffect(() => {
+    if (category !== 'air') return;
+    const scope = `${companyId}:${year}:${period}:${initialReport?.id ?? 'new'}`;
+    if (airScopeRef.current === scope) return;
+    airScopeRef.current = scope;
+    const current = initialReport && initialReport.companyId === companyId && initialReport.year === Number(year) && initialReport.period === period ? initialReport : undefined;
+    setRows(existing => ({ ...existing, air_flaring: buildAirFlaringRows(current, period) }));
+  }, [category, companyId, year, period, initialReport]);
   const comparisons = definition.fields.flatMap<Warning>(field => {
     if (field.type === 'text') return [];
     const currentRaw = effectiveValues[field.key];
@@ -168,7 +226,8 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
     }
     for (const section of rowSections[category]) {
       const resultRows: Record<string, string | number>[] = [];
-      for (const row of rows[section.key] ?? []) {
+      for (const sourceRow of rows[section.key] ?? []) {
+        const row = category === 'waste' && section.key === 'waste_streams' ? { ...sourceRow, ...calculatedWasteValues(sourceRow) } : sourceRow;
         const outputRow: Record<string, string | number> = {};
         for (const field of section.fields) {
           const raw = (row[field.key] ?? '').trim();
@@ -225,9 +284,29 @@ export function ReportForm({ category, companies, reports, initialReport, canSav
             {category === 'indicators' && <label style={{ marginTop: 8, fontWeight: 500 }}>علت تغییر / توضیحات<textarea value={fieldComments[field.key] ?? ''} onChange={event => setFieldComments(current => ({ ...current, [field.key]: event.target.value }))} maxLength={2000} rows={2} placeholder="در صورت تغییر قابل توجه، علت را توضیح دهید" style={{ display: 'block', width: '100%', marginTop: 6, border: '1px solid #e2ebe4', borderRadius: 8, padding: '9px 10px', resize: 'vertical', color: '#536d5c', fontSize: 11, lineHeight: 1.8 }} /></label>}
           </div>;
         })}</div>
-        {rowSections[category].map(section => <div className="row-section" key={section.key}><div className="row-section-heading"><div><h3>{section.title}</h3><p>{section.description}</p></div><button className="add-row" onClick={() => setRows(current => ({ ...current, [section.key]: [...(current[section.key] ?? []), {}] }))}><Plus size={15}/> افزودن ردیف</button></div>{(rows[section.key] ?? []).length === 0 ? <div className="row-empty">هنوز ردیفی اضافه نشده است.</div> : (rows[section.key] ?? []).map((row, index) => <div className="detail-row" key={index}><div className="detail-row-top"><strong>ردیف {faNumber(index + 1)}</strong><button aria-label={`حذف ردیف ${faNumber(index + 1)} از ${section.title}`} onClick={() => setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).filter((_, rowIndex) => rowIndex !== index) }))}><Trash2 size={15}/> حذف</button></div><div className="form-grid detail-grid">{section.fields.map(field => <label key={field.key}>{field.label}<div className="input-unit"><input aria-label={`${field.label}، ردیف ${index + 1}، ${section.title}`} type="text" inputMode={field.type === 'text' ? 'text' : 'decimal'} value={row[field.key] ?? ''} onChange={event => { const nextValue = event.target.value; setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).map((item, rowIndex) => rowIndex === index ? { ...item, [field.key]: nextValue } : item) })); }} placeholder={field.placeholder || 'وارد کنید'} />{field.unit && <span dir="auto">{field.unit}</span>}</div></label>)}</div></div>)}</div>)}
+        {category === 'waste' ? <WasteSheet rows={(rows.waste_streams ?? []) as WasteRow[]} onChange={(index, key, value) => setRows(current => ({ ...current, waste_streams: (current.waste_streams ?? []).map((item, rowIndex) => rowIndex === index ? { ...item, [key]: value } : item) }))} /> : rowSections[category].map(section => section.key === 'air_flaring' ? <AirFlaringSheet key={section.key} rows={rows[section.key] ?? []} period={period} onChange={(index, key, value) => setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).map((item, rowIndex) => rowIndex === index ? { ...item, [key]: value } : item) }))} /> : <GenericRowSection key={section.key} section={section} rows={rows[section.key] ?? []} onChange={(index, key, value) => setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).map((item, rowIndex) => rowIndex === index ? { ...item, [key]: value } : item) }))} onAdd={() => setRows(current => ({ ...current, [section.key]: [...(current[section.key] ?? []), {}] }))} onDelete={index => setRows(current => ({ ...current, [section.key]: (current[section.key] ?? []).filter((_, rowIndex) => rowIndex !== index) }))} />)}
         <div className="form-footer"><span><Info size={15}/> فیلد خالی به معنی داده ناموجود است، نه صفر.</span><div><button className="outline-btn" disabled={saving} onClick={() => submit('draft')}><Save size={16}/> ذخیره پیش‌نویس</button><button className="primary-btn" disabled={saving} onClick={() => submit('submitted')}><Send size={16}/> {saving ? 'در حال ارسال...' : 'ارسال گزارش'}</button></div></div>{message && <div role="alert" className={`form-message ${message.kind}`}>{message.kind === 'error' ? <AlertCircle size={18}/> : <CheckCircle2 size={18}/>}<span>{message.text}</span></div>}</section></div>
       <aside className="form-aside"><div className="panel guidance"><div className="panel-title"><span className="mini-icon"><Info size={17}/></span><h2>راهنمای ثبت</h2></div><div className="guide-step"><b>۱</b><p><strong>انتخاب دوره</strong><small>شرکت، سال و دوره مورد نظر را انتخاب کنید.</small></p></div><div className="guide-step"><b>۲</b><p><strong>ورود اطلاعات</strong><small>مقادیر را با واحد نمایش‌داده‌شده وارد کنید.</small></p></div><div className="guide-step"><b>۳</b><p><strong>بررسی و ارسال</strong><small>پس از بررسی تغییرات، گزارش را ارسال کنید.</small></p></div></div><div className="comparison-card"><div className="comparison-title"><AlertCircle size={19}/><strong>مقایسه با دوره مشابه سال قبل</strong></div><p>{previous ? `مبنای مقایسه: ${companyName(companies, previous.companyId)}، ${periodLabel(previous)} ${faNumber(String(previous.year))}.` : 'داده‌ای از دوره مشابه سال قبل برای مقایسه وجود ندارد.'}</p><small>{category === 'indicators' ? 'برای شاخص‌های وزارت نفت، تغییر ۳۰٪ یا بیشتر هشدار ایجاد می‌کند. علت تغییر را کنار همان فیلد ثبت کنید.' : 'آستانه هشدار موقت ۲۰٪ است؛ این مقایسه تقریبی است و به‌تنهایی نشانه خطا نیست. مبنای صفر نیز نمایش داده می‌شود.'}</small>{comparisons.map(item => <div className="comparison-warning" key={item.field}>{item.message}</div>)}{serverWarnings.map((item, index) => <div className="comparison-warning" key={`${item.field}-${index}`}>{item.message}</div>)}</div><button className="aside-link" onClick={() => setView('analytics')}>مشاهده تحلیل گزارش‌ها <ChevronLeft size={16}/></button></aside></div>
   </>;
+}
+type WasteSheetProps = { rows: WasteRow[]; onChange: (index: number, key: string, value: string) => void };
+function GenericRowSection({ section, rows, onChange, onAdd, onDelete }: { section: RowSection; rows: InputRow[]; onChange: (index: number, key: string, value: string) => void; onAdd: () => void; onDelete: (index: number) => void }) {
+  return <div className="row-section"><div className="row-section-heading"><div><h3>{section.title}</h3><p>{section.description}</p></div><button className="add-row" onClick={onAdd}><Plus size={15}/> افزودن ردیف</button></div>{rows.length === 0 ? <div className="row-empty">هنوز ردیفی اضافه نشده است.</div> : rows.map((row, index) => <div className="detail-row" key={index}><div className="detail-row-top"><strong>ردیف {faNumber(index + 1)}</strong><button aria-label={`حذف ردیف ${faNumber(index + 1)} از ${section.title}`} onClick={() => onDelete(index)}><Trash2 size={15}/> حذف</button></div><div className="form-grid detail-grid">{section.fields.map(field => <label key={field.key}>{field.label}<div className="input-unit"><input aria-label={`${field.label}، ردیف ${index + 1}، ${section.title}`} type="text" inputMode={field.type === 'text' ? 'text' : 'decimal'} value={row[field.key] ?? ''} onChange={event => onChange(index, field.key, event.target.value)} placeholder={field.placeholder || 'وارد کنید'} />{field.unit && <span dir="auto">{field.unit}</span>}</div></label>)}</div></div>)}</div>;
+}
+const wasteColumns: { key: string; label: string; readOnly?: boolean }[] = [
+  { key: 'form_code', label: 'کد فرم', readOnly: true }, { key: 'hazard_code', label: 'کد خطر', readOnly: true }, { key: 'waste_name', label: 'نام پسماند', readOnly: true },
+  { key: 'production_unit', label: 'واحد تولیدی' }, { key: 'product_amount', label: 'مقدار محصول' }, { key: 'product_unit', label: 'واحد محصول' },
+  { key: 'opening_balance', label: 'مانده از قبل', readOnly: true }, { key: 'incoming', label: 'ورودی' }, { key: 'generated', label: 'تولید دوره' }, { key: 'period_total', label: 'مجموع دوره', readOnly: true },
+  { key: 'reuse', label: 'استفاده مجدد' }, { key: 'sale', label: 'فروش' }, { key: 'incineration', label: 'سوزاندن' }, { key: 'landfill', label: 'دفن' }, { key: 'external_recycling', label: 'بازیافت / انتقال خارج' },
+  { key: 'management_total', label: 'مجموع مدیریت', readOnly: true }, { key: 'closing_balance', label: 'موجودی پایان', readOnly: true },
+];
+function WasteSheet({ rows, onChange }: WasteSheetProps) {
+  return <div className="row-section waste-sheet-section"><div className="row-section-heading"><div><h3>جدول ثابت کدهای پسماند</h3><p>همه کدها در هر دوره ثابت هستند؛ ستون «مانده از قبل» از موجودی پایان دوره قبلی همین شرکت پر می‌شود.</p></div><span className="waste-fixed-badge">{faNumber(rows.length)} ردیف ثابت</span></div><div className="waste-sheet-help"><Info size={15}/> مقادیر «مجموع دوره»، «مجموع مدیریت» و «موجودی پایان» خودکار محاسبه می‌شوند و قابل ویرایش نیستند. واحد همه مقادیر جرمی: تن.</div><div className="waste-sheet-wrap"><table className="waste-sheet"><thead><tr>{wasteColumns.map(column => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>{rows.map((row, index) => { const calculated = calculatedWasteValues(row); return <tr key={`${row.form_code ?? 'custom'}-${index}`}>{wasteColumns.map(column => { const derived = calculated[column.key]; const value = derived !== undefined ? derived : row[column.key] ?? ''; const locked = !!column.readOnly; return <td key={column.key} className={locked ? 'waste-derived' : ''}><input aria-label={`${column.label}، کد ${row.form_code || 'سایر'}`} type="text" inputMode={column.key === 'production_unit' || column.key === 'product_unit' || column.key === 'form_code' || column.key === 'hazard_code' || column.key === 'waste_name' ? 'text' : 'decimal'} value={value} readOnly={locked} onChange={event => onChange(index, column.key, event.target.value)} placeholder={locked ? 'خودکار' : '—'} /></td>; })}</tr>; })}</tbody></table></div></div>;
+}
+const halfMonths = [['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور'], ['مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند']];
+type AirFlaringProps = { rows: InputRow[]; period: 1 | 2; onChange: (index: number, key: string, value: string) => void };
+function AirFlaringSheet({ rows, period, onChange }: AirFlaringProps) {
+  const columns = [{ key: 'month', label: 'ماه', readOnly: true }, { key: 'flare_gas', label: 'تناژ فلرینگ' }, { key: 'flare_unit', label: 'واحد' }, { key: 'co', label: 'CO' }, { key: 'nox', label: 'NOx' }, { key: 'co2', label: 'CO₂' }, { key: 'so2', label: 'SO₂' }, { key: 'thc', label: 'THC' }, { key: 'methane', label: 'متان' }, { key: 'pollutant_units', label: 'واحد آلاینده‌ها' }];
+  return <div className="row-section air-flaring-section"><div className="row-section-heading"><div><h3>گزارش ماهانه فلرینگ</h3><p>تناژ گاز ارسالی به فلر و آلاینده‌ها را برای هر ماه دوره وارد کنید.</p></div><span className="waste-fixed-badge">۶ ماه ثابت</span></div><div className="waste-sheet-help"><Info size={15}/> دوره اول: فروردین تا شهریور؛ دوره دوم: مهر تا اسفند. ردیف‌های ماهانه حذف یا اضافه نمی‌شوند.</div><div className="waste-sheet-wrap"><table className="waste-sheet air-flaring-sheet"><thead><tr>{columns.map(column => <th key={column.key}>{column.label}</th>)}</tr></thead><tbody>{halfMonths[period - 1].map((month, index) => { const row = rows[index] ?? {}; return <tr key={month}>{columns.map(column => <td key={column.key} className={column.readOnly ? 'waste-derived' : ''}><input aria-label={`${column.label}، ${month}`} type="text" inputMode={column.key === 'month' || column.key === 'flare_unit' || column.key === 'pollutant_units' ? 'text' : 'decimal'} value={column.key === 'month' ? month : row[column.key] ?? ''} readOnly={column.readOnly} onChange={event => onChange(index, column.key, event.target.value)} placeholder="—" /></td>)}</tr>; })}</tbody></table></div></div>;
 }
 function FileTextIcon() { return <span className="document-glyph">≡</span>; }
