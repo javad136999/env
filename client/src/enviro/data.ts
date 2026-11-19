@@ -119,12 +119,12 @@ export const wasteTemplates: WasteTemplate[] = [
 // Repeatable rows are serialized as JSON strings in report.values, preserving distinct units and missing values.
 export const rowSections: Record<Category, RowSection[]> = {
   water: [
-    { key: 'water_sources', title: 'منابع و مصارف آب', description: 'برای هر منبع یا نوع آب یک ردیف جداگانه وارد کنید. آب و بخار را با واحدهای متفاوت جمع نکنید.', fields: [
+    { key: 'water_sources', title: 'منابع و مصارف آب', description: 'ردیف‌های استاندارد از قبل آماده شده‌اند؛ مقدار و محل تأمین یا مصرف هر منبع را تکمیل کنید.', fields: [
       { key: 'source', label: 'منبع آب / کد E1 تا E3', type: 'text' }, { key: 'water_type', label: 'نوع آب یا بخار', type: 'text' },
       { key: 'supply_location', label: 'محل تأمین', type: 'text' }, { key: 'consumption_location', label: 'محل مصرف', type: 'text' },
       { key: 'amount', label: 'مقدار دوره' }, { key: 'unit', label: 'واحد مقدار (مثلاً مترمکعب یا تن)', type: 'text' },
     ] },
-    { key: 'water_effluents', title: 'جریان‌ها و کیفیت پساب', description: 'برای هر جریان، حجم، محل و روش مدیریت و پارامترهای قابل اندازه‌گیری را جداگانه ثبت کنید.', fields: [
+    { key: 'water_effluents', title: 'جریان‌ها و کیفیت پساب', description: 'جریان‌های اصلی پساب از قبل آماده شده‌اند؛ حجم، روش تصفیه و پارامترهای کیفیت را تکمیل کنید.', fields: [
       { key: 'stream_type', label: 'نوع جریان پساب', type: 'text', placeholder: 'فرآیندی، بهداشتی، بلودان یا سایر' }, { key: 'volume', label: 'حجم دوره', unit: 'مترمکعب' },
       { key: 'pond', label: 'حوضچه / محل', type: 'text' }, { key: 'management', label: 'نوع مدیریت یا تصفیه', type: 'text' },
       { key: 'cod', label: 'COD' }, { key: 'ph', label: 'pH' }, { key: 'nh3', label: 'NH3' }, { key: 'turbidity', label: 'TURB' },
@@ -132,7 +132,7 @@ export const rowSections: Record<Category, RowSection[]> = {
     ] },
   ],
   waste: [
-    { key: 'waste_streams', title: 'ردیف‌های پسماند', description: 'هر شرکت می‌تواند ردیف‌های متفاوت داشته باشد. «مانده اول دوره» از «موجودی پایان» دوره قبل همان ردیف پیشنهاد می‌شود و قابل اصلاح است.', fields: [
+    { key: 'waste_streams', title: 'جدول استاندارد پسماند', description: 'کدهای پسماند ثابت هستند؛ فقط مقادیر دوره را تکمیل کنید. مانده اول دوره از گزارش قبلی منتقل می‌شود.', fields: [
       { key: 'opening_balance', label: 'مانده اول دوره', unit: 'تن' }, { key: 'production_unit', label: 'واحد تولیدی', type: 'text' }, { key: 'product_amount', label: 'مقدار محصول' }, { key: 'product_unit', label: 'واحد محصول', type: 'text' },
       { key: 'form_code', label: 'کد فرم', type: 'text' }, { key: 'hazard_code', label: 'کد خطر', type: 'text' }, { key: 'waste_name', label: 'نام پسماند', type: 'text' },
       { key: 'incoming', label: 'ورودی', unit: 'تن' }, { key: 'generated', label: 'تولید دوره', unit: 'تن' },
@@ -147,13 +147,13 @@ export const rowSections: Record<Category, RowSection[]> = {
       { key: 'co', label: 'CO' }, { key: 'nox', label: 'NOx' }, { key: 'co2', label: 'CO₂' }, { key: 'so2', label: 'SO₂' }, { key: 'thc', label: 'THC / VOC' }, { key: 'methane', label: 'متان' },
       { key: 'pollutant_units', label: 'واحد آلاینده‌ها', type: 'text', placeholder: 'واحد هر آلاینده را ذکر کنید' },
     ] },
-    { key: 'air_flare_composition', title: 'ترکیب درصد فلرینگ', description: 'ترکیب گاز فلر را به تفکیک ماده، فرمول و مبنای درصد ثبت کنید.', fields: [
+    { key: 'air_flare_composition', title: 'ترکیب درصد فلرینگ', description: 'ترکیب‌های اصلی از قبل آماده شده‌اند؛ مبنا و درصد هر ترکیب را تکمیل کنید.', fields: [
       { key: 'name', label: 'نام ترکیب', type: 'text' }, { key: 'formula', label: 'فرمول ترکیب', type: 'text' }, { key: 'basis', label: 'مبنای مولی / جرمی', type: 'text' }, { key: 'percentage', label: 'درصد ترکیب', unit: '٪' },
     ] },
-    { key: 'air_feed_products', title: 'خوراک و محصول', description: 'خوراک و محصولات مرتبط با گزارش هوا و فلرینگ را با مقدار و واحد مستقل وارد کنید.', fields: [
+    { key: 'air_feed_products', title: 'خوراک و محصول', description: 'ردیف‌های اصلی خوراک و محصول آماده هستند؛ مقدار و واحد هر ردیف را وارد کنید.', fields: [
       { key: 'name', label: 'نام خوراک / محصول', type: 'text' }, { key: 'amount', label: 'مقدار دوره' }, { key: 'unit', label: 'واحد', type: 'text' },
     ] },
-    { key: 'air_combustion', title: 'محاسبات فلرینگ', description: 'پارامترهای محاسبه فلرینگ، منابع احتراقی و ضرایب انتشار را طبق شیت محاسبات ثبت کنید.', fields: [
+    { key: 'air_combustion', title: 'محاسبات فلرینگ', description: 'منابع اصلی محاسبه از قبل آماده هستند؛ سوخت، روش محاسبه و ضریب انتشار را تکمیل کنید.', fields: [
       { key: 'production_unit', label: 'واحد / منبع محاسبه', type: 'text' }, { key: 'source_type', label: 'نوع منبع احتراقی', type: 'text' }, { key: 'source_count', label: 'تعداد منبع', unit: 'عدد' },
       { key: 'fuel_type', label: 'نوع سوخت / گاز فلر', type: 'text' }, { key: 'fuel_amount', label: 'مقدار سوخت یا گاز ورودی' }, { key: 'fuel_unit', label: 'واحد ورودی', type: 'text' },
       { key: 'calculation_method', label: 'روش / فرمول محاسبه', type: 'text' }, { key: 'emission_factor', label: 'ضریب انتشار' }, { key: 'factor_unit', label: 'واحد ضریب', type: 'text' },
